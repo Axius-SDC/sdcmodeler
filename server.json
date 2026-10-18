@@ -1,0 +1,35 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.Axius-SDC/sdcmodeler",
+  "description": "The modeler's client for SDCStudio: search the catalog, estimate, assemble and publish SDC4 models.",
+  "repository": {
+    "url": "https://github.com/Axius-SDC/sdcmodeler",
+    "source": "github"
+  },
+  "version": "4.0.0",
+  "packages": [
+    {
+      "registryType": "pypi",
+      "registryBaseUrl": "https://pypi.org",
+      "identifier": "sdcmodeler",
+      "version": "4.0.0",
+      "runtimeHint": "uvx",
+      "transport": { "type": "stdio" },
+      "packageArguments": [
+        {
+          "type": "positional",
+          "value": "mcp",
+          "description": "Run the MCP stdio server rather than the CLI."
+        }
+      ],
+      "environmentVariables": [
+        {
+          "name": "SDCSTUDIO_API_KEY",
+          "description": "An SDCStudio API key (Settings, API Keys) with the scopes and spending limit the agent should have. Optional: the catalog and estimates work without one.",
+          "isRequired": false,
+          "isSecret": true
+        }
+      ]
+    }
+  ]
+}
