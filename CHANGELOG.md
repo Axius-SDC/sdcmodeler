@@ -6,6 +6,31 @@ of the SDC4 reference model.
 
 ## [Unreleased]
 
+## [4.1.0] - 2026-10-18
+
+### Changed
+
+- **The estimate is the server's when a key is set** (SDCStudio 4.17.0,
+  `POST /api/v1/dmgen/assemble/estimate/`): every leaf resolved as `assemble/`
+  resolves it, problems named (unknown, unpublished, retired with its
+  successor), new clusters counted as mints, the wallet's and the key's
+  position in the answer, and the same `estimate_id` the local computation
+  produces. Without a key, or against an older deployment, the local estimate
+  is used and marked `"source": "local"`.
+- **`assemble` sends `estimate_id`** and the server refuses a build whose title
+  or tree changed since the estimate (409 `stale_estimate`). The MCP
+  `build_model` passes the id it checked; two gates, one id.
+- **`job_status` is the job resource** (`GET /api/v1/jobs/<ct_id>/`): status,
+  step, cost so far, the model's links on completion, the reason on failure.
+  `assemble` on the mixed path returns `job_ct_id`; the MCP tool takes it. The
+  pipeline's own status stays available as `pipeline_status`.
+
+### Added
+
+- `jobs()` lists the caller's jobs; `generate_package(..., as_job=True)` and
+  `generate_app(..., as_job=True)` answer a job instead of waiting; the CLI's
+  `job` takes an id or `--list`, and `build` takes `--estimate-id`.
+
 ## [4.0.0] - 2026-10-18
 
 ### Added

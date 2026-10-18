@@ -125,11 +125,11 @@ TOOLS: list[dict[str, Any]] = [
         "name": "build_model",
         "description": (
             "Assemble and publish the model the person estimated and approved. Needs the estimate_id "
-            "from estimate_model for the same title and tree; refuses otherwise, and refuses when the "
-            "estimate exceeds what the key may still spend. Spends credits: 500 for the model plus "
-            "100 per minted component. With every leaf existing the model is published and its "
-            "package generated at once (result has ct_id and artifacts); with new leaves the "
-            "pipeline runs and the result has a data_source_ct_id to poll with job_status. A 402 "
+            "from estimate_model for the same title and tree; refuses otherwise, the server refuses a stale "
+            "one too, and refuses when the estimate exceeds what the key may still spend. Spends credits: "
+            "500 for the model plus 100 per minted component or new cluster. With every leaf existing the "
+            "model is published and its package generated at once (result has ct_id and artifacts); with "
+            "new leaves the pipeline runs and the result has a job_ct_id to poll with job_status. A 402 "
             "means the wallet needs funding at the wallet page; report it and stop."
         ),
         "inputSchema": {
@@ -146,8 +146,12 @@ TOOLS: list[dict[str, Any]] = [
     },
     {
         "name": "job_status",
-        "description": "The pipeline status of a mixed build (data_source_ct_id from build_model): uploaded, parsing, parsed, agent_processing, modeling, completed, error, agent_error. Free.",
-        "inputSchema": {"type": "object", "properties": {"data_source_ct_id": {"type": "string"}}, "required": ["data_source_ct_id"]},
+        "description": (
+            "One job (job_ct_id from build_model): status queued, running, completed or failed; step; "
+            "cost_credits so far; on completion the model's links (dm_ct_id, catalog_url, package_url); "
+            "on failure the reason. Poll every few seconds, backing off. Free."
+        ),
+        "inputSchema": {"type": "object", "properties": {"job_ct_id": {"type": "string"}}, "required": ["job_ct_id"]},
     },
     {
         "name": "generate_app",
@@ -218,11 +222,16 @@ def _handle_estimate_model(args: dict) -> Any:
     tree = _object(args, "tree", required=True)
     estimate = get_client().estimate(tree, _string(args, "title", required=True))
     _estimates[estimate["estimate_id"]] = estimate
-    policy = _policy_or_none()
-    if policy and policy.get("spend_limit_credits") is not None:
-        remaining = max(0, policy["spend_limit_credits"] - policy.get("spent_credits", 0))
-        estimate["key_remaining_credits"] = remaining
-        estimate["within_key_limit"] = estimate["total_credits"] <= remaining
+    key = estimate.get("key") if estimate.get("source") == "server" else None
+    if key and key.get("remaining_credits") is not None:
+        estimate["key_remaining_credits"] = key["remaining_credits"]
+        estimate["within_key_limit"] = bool(key.get("within_limit"))
+    else:
+        policy = _policy_or_none()
+        if policy and policy.get("spend_limit_credits") is not None:
+            remaining = max(0, policy["spend_limit_credits"] - policy.get("spent_credits", 0))
+            estimate["key_remaining_credits"] = remaining
+            estimate["within_key_limit"] = estimate["total_credits"] <= remaining
     return estimate
 
 
@@ -246,21 +255,26 @@ def _handle_build_model(args: dict) -> Any:
         )
     if current["problems"]:
         raise ValueError("The tree has problems: " + "; ".join(current["problems"]))
-    policy = _policy_or_none()
-    if policy and policy.get("spend_limit_credits") is not None:
-        remaining = max(0, policy["spend_limit_credits"] - policy.get("spent_credits", 0))
-        if current["total_credits"] > remaining:
-            raise ValueError(
-                f"This key may still spend {remaining} credits and the build needs {current['total_credits']}. "
-                "Ask the person for a key with a higher limit, or to run the build themselves."
-            )
-    result = get_client().assemble(title, tree, description=_string(args, "description"), contextual=_object(args, "contextual"))
+    remaining = None
+    if current.get("source") == "server" and (current.get("key") or {}).get("remaining_credits") is not None:
+        remaining = current["key"]["remaining_credits"]
+    else:
+        policy = _policy_or_none()
+        if policy and policy.get("spend_limit_credits") is not None:
+            remaining = max(0, policy["spend_limit_credits"] - policy.get("spent_credits", 0))
+    if remaining is not None and current["total_credits"] > remaining:
+        raise ValueError(
+            f"This key may still spend {remaining} credits and the build needs {current['total_credits']}. "
+            "Ask the person for a key with a higher limit, or to run the build themselves."
+        )
+    result = get_client().assemble(title, tree, description=_string(args, "description"),
+                                   contextual=_object(args, "contextual"), estimate_id=estimate_id)
     result["estimate"] = current
     return result
 
 
 def _handle_job_status(args: dict) -> Any:
-    return get_client().job_status(_string(args, "data_source_ct_id", required=True))
+    return get_client().job_status(_string(args, "job_ct_id", required=True))
 
 
 def _handle_generate_app(args: dict) -> Any:

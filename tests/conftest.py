@@ -15,6 +15,8 @@ class Fake:
     def __init__(self):
         self.routes: dict = {}
         self.calls: list = []
+        # assemble() checks the Modeler's default project once; most tests have one.
+        self.on("GET", "/api/v1/auth/modeler/", body={"project_ct_id": "p-default", "projects": []})
 
     def on(self, method, path, status=200, body=None, headers=None):
         self.routes[(method, path)] = (status, body, headers or {})

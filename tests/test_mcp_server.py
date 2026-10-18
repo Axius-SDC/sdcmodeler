@@ -22,6 +22,16 @@ def call(name, arguments):
 @pytest.fixture(autouse=True)
 def bound(fake, tmp_path):
     fake.on("GET", "/api/v1/auth/api-tokens/", body={"tokens": [{"prefix": KEY[:12], "scopes": ["read", "build", "spend"], "spend_limit_credits": 1000, "spent_credits": 300}]})
+    # The server's estimate (4.17.0) for TREE: 500 + 100, the key at 700 remaining.
+    from sdcmodeler.pricing import estimate_tree
+
+    def server_estimate(request):
+        body = json.loads(request.content)
+        local = estimate_tree(body["data"], body["title"])
+        return {**local, "wallet": {"balance_credits": 10000, "can_pay": True},
+                "key": {"remaining_credits": 700, "within_limit": local["total_credits"] <= 700}}
+
+    fake.on("POST", "/api/v1/dmgen/assemble/estimate/", body=server_estimate)
     mcp_server.configure(fake.client(), output_dir=tmp_path)
     return fake
 
@@ -45,10 +55,17 @@ def test_build_needs_the_estimate_the_person_saw(bound):
     assert "exact title and tree" in err
     built, _ = call("build_model", {"estimate_id": est["estimate_id"], "title": "Vitals", "tree": TREE})
     assert built["mode"] == "mixed" and built["estimate"]["estimate_id"] == est["estimate_id"]
+    assert built["estimate"]["source"] == "server"
+    assert json.loads([c for c in bound.calls if c.url.path.endswith("/assemble/")][-1].content)["estimate_id"] == est["estimate_id"]
 
 
 def test_build_stops_at_the_keys_limit(bound):
-    bound.on("GET", "/api/v1/auth/api-tokens/", body={"tokens": [{"prefix": KEY[:12], "scopes": ["read", "build", "spend"], "spend_limit_credits": 1000, "spent_credits": 500}]})
+    def server_estimate(request):
+        from sdcmodeler.pricing import estimate_tree
+        body = json.loads(request.content)
+        local = estimate_tree(body["data"], body["title"])
+        return {**local, "wallet": {"balance_credits": 10000, "can_pay": True}, "key": {"remaining_credits": 500, "within_limit": False}}
+    bound.on("POST", "/api/v1/dmgen/assemble/estimate/", body=server_estimate)
     est, _ = call("estimate_model", {"title": "Vitals", "tree": TREE})
     assert est["within_key_limit"] is False
     _, err = call("build_model", {"estimate_id": est["estimate_id"], "title": "Vitals", "tree": TREE})
@@ -82,3 +99,9 @@ def test_malformed_input_is_answered_not_fatal():
     assert mcp_server._handle_request({"jsonrpc": "2.0", "method": "notifications/initialized"}) is None
     _, err = call("estimate_model", {"title": "t", "tree": "not an object"})
     assert "must be an object" in err
+
+
+def test_job_status_takes_the_job_id(bound):
+    bound.on("GET", "/api/v1/jobs/j1/", body={"ct_id": "j1", "status": "running", "step": "modeling", "cost_credits": 100})
+    out, _ = call("job_status", {"job_ct_id": "j1"})
+    assert out["step"] == "modeling"
