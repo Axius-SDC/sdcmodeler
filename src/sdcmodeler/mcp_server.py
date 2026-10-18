@@ -129,7 +129,9 @@ TOOLS: list[dict[str, Any]] = [
             "one too, and refuses when the estimate exceeds what the key may still spend. Spends credits: "
             "500 for the model plus 100 per minted component or new cluster. With every leaf existing the "
             "model is published and its package generated at once (result has ct_id and artifacts); with "
-            "new leaves the pipeline runs and the result has a job_ct_id to poll with job_status. A 402 "
+            "new leaves the pipeline runs and the result has a job_ct_id to poll with job_status; when the "
+            "job completes it has published and generated as asked and carries the model's links. publish "
+            "false leaves a draft for a person to review. A 402 "
             "means the wallet needs funding at the wallet page; report it and stop."
         ),
         "inputSchema": {
@@ -140,6 +142,8 @@ TOOLS: list[dict[str, Any]] = [
                 "tree": {"type": "object"},
                 "description": {"type": "string", "default": ""},
                 "contextual": {"type": "object", "description": "Optional contextual component references (audit, attestation, party, subject, provider, participation, protocol, workflow, acs)."},
+                "publish": {"type": "boolean", "default": True, "description": "Publish the clusters and the model (false leaves a draft for a person to review)."},
+                "generate": {"type": "boolean", "default": True, "description": "Build the package after publishing (needs publish)."},
             },
             "required": ["estimate_id", "title", "tree"],
         },
@@ -267,9 +271,18 @@ def _handle_build_model(args: dict) -> Any:
             f"This key may still spend {remaining} credits and the build needs {current['total_credits']}. "
             "Ask the person for a key with a higher limit, or to run the build themselves."
         )
+    publish = bool(args.get("publish", True))
+    generate = bool(args.get("generate", True)) and publish
     result = get_client().assemble(title, tree, description=_string(args, "description"),
-                                   contextual=_object(args, "contextual"), estimate_id=estimate_id)
+                                   contextual=_object(args, "contextual"), estimate_id=estimate_id,
+                                   publish=publish, generate=generate)
     result["estimate"] = current
+    result["requested"] = {"publish": publish, "generate": generate}
+    if result.get("mode") == "mixed":
+        result["next"] = (
+            f"Poll job_status with job_ct_id {result.get('job_ct_id')} until completed; its result then says "
+            "published and generated and carries the model's links."
+        )
     return result
 
 

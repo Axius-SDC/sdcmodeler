@@ -105,3 +105,12 @@ def test_job_status_takes_the_job_id(bound):
     bound.on("GET", "/api/v1/jobs/j1/", body={"ct_id": "j1", "status": "running", "step": "modeling", "cost_credits": 100})
     out, _ = call("job_status", {"job_ct_id": "j1"})
     assert out["step"] == "modeling"
+
+
+def test_build_model_passes_the_flags_and_names_what_to_poll(bound):
+    bound.on("POST", "/api/v1/dmgen/assemble/", status=202, body={"status": "processing", "job_ct_id": "j9", "data_source_ct_id": "ds"})
+    est, _ = call("estimate_model", {"title": "Vitals", "tree": TREE})
+    built, _ = call("build_model", {"estimate_id": est["estimate_id"], "title": "Vitals", "tree": TREE, "generate": False})
+    sent = json.loads([c for c in bound.calls if c.url.path.endswith("/assemble/")][-1].content)
+    assert sent["generate"] is False and "publish" not in sent
+    assert built["requested"] == {"publish": True, "generate": False} and "j9" in built["next"]

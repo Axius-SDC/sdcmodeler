@@ -223,17 +223,20 @@ class SDCStudioClient:
 
     def assemble(self, title: str, tree: dict[str, Any], *, description: str = "",
                  contextual: dict | None = None, allow_retired: bool = False,
-                 estimate_id: str | None = None) -> dict[str, Any]:
+                 estimate_id: str | None = None, publish: bool = True, generate: bool = True) -> dict[str, Any]:
         """
         POST ``/api/v1/dmgen/assemble/``.
 
-        Every leaf existing: the server assembles, publishes and generates
-        synchronously and answers 200 with the model (``mode`` ``"reuse"``).
-        Some leaves new: 202 with ``job_ct_id`` (SDCStudio 4.17.0) and
-        ``data_source_ct_id`` to poll with ``job_status`` (``mode`` ``"mixed"``;
-        the result is a draft model). ``estimate_id`` is the id of the estimate
-        the person saw; the server refuses a build whose tree no longer matches
-        it (409 ``stale_estimate``, raised as ``AssemblyRefused``).
+        Every leaf existing: the server assembles, and with ``publish`` (default)
+        publishes and with ``generate`` (default) builds the package, in one call;
+        200 with the model, ``published``, ``generated`` and ``model_url``
+        (``mode`` ``"reuse"``). Some leaves new: 202 with ``job_ct_id`` (SDCStudio
+        4.17.0) to poll with ``job_status`` (``mode`` ``"mixed"``); when the
+        pipeline completes, the job publishes bottom-up and generates as the flags
+        asked (4.17.2) and its result says ``published`` and ``generated``.
+        ``estimate_id`` is the id of the estimate the person saw; the server
+        refuses a build whose tree no longer matches it (409 ``stale_estimate``,
+        raised as ``AssemblyRefused``).
         """
         # assemble/ needs the Modeler's default project and answers 400 without one;
         # the PRD's "default project created on first use" (3.1.4) is done here,
@@ -252,6 +255,10 @@ class SDCStudioClient:
             payload["allow_retired"] = True
         if estimate_id:
             payload["estimate_id"] = estimate_id
+        if not publish:
+            payload["publish"] = False
+        if not generate or not publish:
+            payload["generate"] = False
         resp = self._http.post("/api/v1/dmgen/assemble/", json=payload)
         if resp.status_code == 409:
             raise AssemblyRefused(409, _body(resp), (_body(resp) or {}).get("error", "Assembly refused.") if isinstance(_body(resp), dict) else "Assembly refused.")
@@ -268,6 +275,29 @@ class SDCStudioClient:
         completion, ``error`` on failure.
         """
         return self._get(f"/api/v1/jobs/{job_ct_id}/")
+
+    def wait_for_job(self, job_ct_id: str, *, timeout: float = 900.0, interval: float = 3.0,
+                     max_interval: float = 20.0) -> dict[str, Any]:
+        """
+        Poll the job until it is ``completed`` or ``failed`` (or ``timeout`` seconds pass).
+
+        Backs off from ``interval`` to ``max_interval``. Returns the last job
+        record; raises ``TimeoutError`` with it attached when time runs out.
+        """
+        import time
+
+        deadline = time.monotonic() + timeout
+        wait = interval
+        while True:
+            job = self.job_status(job_ct_id)
+            if job.get("status") in ("completed", "failed"):
+                return job
+            if time.monotonic() >= deadline:
+                err = TimeoutError(f"Job {job_ct_id} still {job.get('status')} after {timeout:.0f}s")
+                err.job = job  # type: ignore[attr-defined]
+                raise err
+            time.sleep(wait)
+            wait = min(max_interval, wait * 1.5)
 
     def jobs(self, *, kind: str | None = None, data_source_ct_id: str | None = None) -> dict[str, Any]:
         """The caller's jobs, newest first; narrowed by ``kind`` or ``data_source_ct_id``."""
