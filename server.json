@@ -6,15 +6,17 @@
     "url": "https://github.com/Axius-SDC/sdcmodeler",
     "source": "github"
   },
-  "version": "4.0.0",
+  "version": "4.1.0",
   "packages": [
     {
       "registryType": "pypi",
       "registryBaseUrl": "https://pypi.org",
       "identifier": "sdcmodeler",
-      "version": "4.0.0",
+      "version": "4.1.0",
       "runtimeHint": "uvx",
-      "transport": { "type": "stdio" },
+      "transport": {
+        "type": "stdio"
+      },
       "packageArguments": [
         {
           "type": "positional",

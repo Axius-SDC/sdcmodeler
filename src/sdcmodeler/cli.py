@@ -50,11 +50,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     s = sub.add_parser("build", help="assemble (and, with every leaf existing, publish and generate) a model; spends credits")
     s.add_argument("tree"); s.add_argument("--title", required=True); s.add_argument("--description", default="")
-    s.set_defaults(func=lambda c, a: c.assemble(a.title, _load_tree(a.tree), description=a.description))
+    s.add_argument("--estimate-id", default=None, help="the id `estimate` printed; the server refuses a build whose tree changed since")
+    s.set_defaults(func=lambda c, a: c.assemble(a.title, _load_tree(a.tree), description=a.description, estimate_id=a.estimate_id))
 
-    s = sub.add_parser("job", help="status of a mixed build or an upload")
-    s.add_argument("data_source_ct_id")
-    s.set_defaults(func=lambda c, a: c.job_status(a.data_source_ct_id))
+    s = sub.add_parser("job", help="one job by id (from build), or every job with --list")
+    s.add_argument("job_ct_id", nargs="?")
+    s.add_argument("--list", action="store_true")
+    s.set_defaults(func=lambda c, a: c.jobs() if a.list or not a.job_ct_id else c.job_status(a.job_ct_id))
 
     s = sub.add_parser("package", help="generate a published model's package and download it")
     s.add_argument("ct_id"); s.add_argument("--dir", default=".")

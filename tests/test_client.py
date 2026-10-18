@@ -41,10 +41,13 @@ def test_artifact_download_streams_bytes_on_a_local_deployment(fake, tmp_path):
 
 
 def test_assemble_reuse_is_sync_and_mixed_is_async(fake):
+    fake.on("GET", "/api/v1/auth/modeler/", body={"project_ct_id": "p1"})
     fake.on("POST", "/api/v1/dmgen/assemble/", body={"ct_id": "m1", "title": "Vitals", "artifacts": {"xsd": "/api/v1/catalog/dm/m1/xsd/"}})
     r = fake.client().assemble("Vitals", TREE, description="d")
     assert r["mode"] == "reuse" and r["ct_id"] == "m1"
     assert body_of(fake.calls[-1]) == {"title": "Vitals", "description": "d", "data": TREE}
+    fake.client().assemble("Vitals", TREE)
+    assert "description" not in body_of(fake.calls[-1]), "the server refuses a blank description; an empty one is left out"
     fake.on("POST", "/api/v1/dmgen/assemble/", status=202, body={"status": "processing", "task_id": "t", "data_source_ct_id": "ds1", "estimated_cost_credits": 600, "new_components": 1})
     r = fake.client().assemble("Vitals", TREE)
     assert r["mode"] == "mixed" and r["data_source_ct_id"] == "ds1"
@@ -67,6 +70,35 @@ def test_the_three_refusals_are_typed(fake):
     with pytest.raises(SDCStudioError) as e:
         c.assemble("V", TREE)
     assert e.value.status == 500
+
+
+def test_estimate_is_the_servers_with_a_key_and_local_without(fake):
+    server = {"estimate_id": "abc", "total_credits": 700, "mode": "mixed", "reuse": [], "mint": [], "problems": [],
+              "wallet": {"balance_credits": 10, "can_pay": False}, "key": {"remaining_credits": 5000, "within_limit": True}}
+    fake.on("POST", "/api/v1/dmgen/assemble/estimate/", body=server)
+    e = fake.client().estimate(TREE, "Vitals")
+    assert e["source"] == "server" and e["total_credits"] == 700 and body_of(fake.calls[-1]) == {"title": "Vitals", "data": TREE}
+    e = fake.client(api_key=None).estimate(TREE, "Vitals")
+    assert e["source"] == "local" and e["total_credits"] == 500
+    fake.on("POST", "/api/v1/dmgen/assemble/estimate/", status=404, body={"detail": "Not found."})
+    assert fake.client().estimate(TREE, "Vitals")["source"] == "local", "a deployment older than 4.17.0"
+
+
+def test_assemble_sends_the_estimate_id_and_a_stale_one_is_refused(fake):
+    fake.on("POST", "/api/v1/dmgen/assemble/", body={"ct_id": "m1"})
+    fake.client().assemble("Vitals", TREE, estimate_id="abc123def456")
+    assert body_of(fake.calls[-1])["estimate_id"] == "abc123def456"
+    fake.on("POST", "/api/v1/dmgen/assemble/", status=409, body={"error": "estimate_id does not match", "error_type": "stale_estimate"})
+    with pytest.raises(AssemblyRefused, match="does not match"):
+        fake.client().assemble("Vitals", TREE, estimate_id="stale")
+
+
+def test_job_status_and_jobs_use_the_job_resource(fake):
+    fake.on("GET", "/api/v1/jobs/j1/", body={"ct_id": "j1", "status": "completed", "result": {"dm_ct_id": "m1"}})
+    fake.on("GET", "/api/v1/jobs/", body={"count": 1, "results": [{"ct_id": "j1"}]})
+    c = fake.client()
+    assert c.job_status("j1")["status"] == "completed"
+    assert c.jobs(kind="assemble")["count"] == 1 and dict(fake.calls[-1].url.params) == {"kind": "assemble"}
 
 
 def test_key_policy_finds_this_keys_own_row(fake):
@@ -93,3 +125,17 @@ def test_download_app_reports_the_servers_charge(fake, tmp_path):
     assert path.name == "app.zip" and charged is False
     with pytest.raises(ValueError):
         fake.client().generate_app("m1", "huge")
+
+
+def test_assemble_creates_the_default_project_once_when_the_modeler_has_none(fake):
+    fake.on("GET", "/api/v1/auth/modeler/", body={"project_ct_id": None, "projects": []})
+    fake.on("POST", "/api/v1/dmgen/projects/", status=201, body={"ct_id": "p1", "name": "Agent models"})
+    fake.on("PATCH", "/api/v1/auth/modeler/update/", body={"project_ct_id": "p1"})
+    fake.on("POST", "/api/v1/dmgen/assemble/", body={"ct_id": "m1"})
+    c = fake.client()
+    c.assemble("A", TREE)
+    c.assemble("B", TREE)
+    assert [r.url.path for r in fake.calls] == [
+        "/api/v1/auth/modeler/", "/api/v1/dmgen/projects/", "/api/v1/auth/modeler/update/",
+        "/api/v1/dmgen/assemble/", "/api/v1/dmgen/assemble/",
+    ]

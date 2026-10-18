@@ -88,6 +88,7 @@ class SDCStudioClient:
         self._http = http or httpx.Client(base_url=self.base_url, headers=headers, timeout=timeout)
         if http is not None and self.api_key and "Authorization" not in http.headers:
             http.headers["Authorization"] = f"Token {self.api_key}"
+        self._default_project_checked = False
 
     def close(self) -> None:
         self._http.close()
@@ -193,25 +194,64 @@ class SDCStudioClient:
 
     # ------------------------------------------------------------------ building
 
-    def estimate(self, tree: dict[str, Any], title: str = "") -> dict[str, Any]:
-        """What the assembly would reuse, mint and cost, computed locally (``sdcmodeler.pricing``)."""
-        return pricing.estimate_tree(tree, title)
+    def estimate(self, tree: dict[str, Any], title: str = "", *, allow_retired: bool = False) -> dict[str, Any]:
+        """
+        What the assembly would reuse, mint and cost.
+
+        With a key, the server's estimate (``POST /api/v1/dmgen/assemble/estimate/``,
+        SDCStudio 4.17.0): every leaf resolved as ``assemble/`` resolves it, problems
+        named, the wallet's and the key's position, and the same ``estimate_id`` the
+        local computation produces. Without a key, or against a deployment older
+        than 4.17.0, the local estimate (``sdcmodeler.pricing``), marked
+        ``"source": "local"``.
+        """
+        local = pricing.estimate_tree(tree, title)
+        if not self.api_key:
+            local["source"] = "local"
+            return local
+        payload: dict[str, Any] = {"title": title, "data": tree}
+        if allow_retired:
+            payload["allow_retired"] = True
+        resp = self._http.post("/api/v1/dmgen/assemble/estimate/", json=payload)
+        if resp.status_code == 404:
+            local["source"] = "local"
+            return local
+        self._raise(resp)
+        server = _body(resp)
+        server["source"] = "server"
+        return server
 
     def assemble(self, title: str, tree: dict[str, Any], *, description: str = "",
-                 contextual: dict | None = None, allow_retired: bool = False) -> dict[str, Any]:
+                 contextual: dict | None = None, allow_retired: bool = False,
+                 estimate_id: str | None = None) -> dict[str, Any]:
         """
         POST ``/api/v1/dmgen/assemble/``.
 
         Every leaf existing: the server assembles, publishes and generates
         synchronously and answers 200 with the model (``mode`` ``"reuse"``).
-        Some leaves new: 202 with ``task_id`` and ``data_source_ct_id`` to poll
-        with ``job_status`` (``mode`` ``"mixed"``; the result is a draft model).
+        Some leaves new: 202 with ``job_ct_id`` (SDCStudio 4.17.0) and
+        ``data_source_ct_id`` to poll with ``job_status`` (``mode`` ``"mixed"``;
+        the result is a draft model). ``estimate_id`` is the id of the estimate
+        the person saw; the server refuses a build whose tree no longer matches
+        it (409 ``stale_estimate``, raised as ``AssemblyRefused``).
         """
-        payload: dict[str, Any] = {"title": title, "description": description, "data": tree}
+        # assemble/ needs the Modeler's default project and answers 400 without one;
+        # the PRD's "default project created on first use" (3.1.4) is done here,
+        # once per client, until the server does it.
+        if not self._default_project_checked:
+            self.ensure_default_project()
+            self._default_project_checked = True
+        # The server refuses a blank description ("may not be blank") but accepts its
+        # absence, so an empty one is left out.
+        payload: dict[str, Any] = {"title": title, "data": tree}
+        if description:
+            payload["description"] = description
         if contextual:
             payload["contextual"] = contextual
         if allow_retired:
             payload["allow_retired"] = True
+        if estimate_id:
+            payload["estimate_id"] = estimate_id
         resp = self._http.post("/api/v1/dmgen/assemble/", json=payload)
         if resp.status_code == 409:
             raise AssemblyRefused(409, _body(resp), (_body(resp) or {}).get("error", "Assembly refused.") if isinstance(_body(resp), dict) else "Assembly refused.")
@@ -221,16 +261,28 @@ class SDCStudioClient:
         data["mode"] = "mixed" if resp.status_code == 202 else "reuse"
         return data
 
-    def job_status(self, data_source_ct_id: str) -> dict[str, Any]:
-        """The pipeline's status for a mixed assembly or an upload (``status``: uploaded, parsing, parsed, agent_processing, modeling, completed, error, agent_error)."""
+    def job_status(self, job_ct_id: str) -> dict[str, Any]:
+        """
+        The job resource (SDCStudio 4.17.0): ``status`` (queued, running, completed,
+        failed), ``step``, ``cost_credits``, ``result`` with the model's links on
+        completion, ``error`` on failure.
+        """
+        return self._get(f"/api/v1/jobs/{job_ct_id}/")
+
+    def jobs(self, *, kind: str | None = None, data_source_ct_id: str | None = None) -> dict[str, Any]:
+        """The caller's jobs, newest first; narrowed by ``kind`` or ``data_source_ct_id``."""
+        return self._get("/api/v1/jobs/", kind=kind, data_source=data_source_ct_id)
+
+    def pipeline_status(self, data_source_ct_id: str) -> dict[str, Any]:
+        """The pipeline's own status for a data source, for deployments older than 4.17.0."""
         return self._get(f"/api/v1/uploader/api/data-sources/{data_source_ct_id}/workflow_status/")
 
     def publish_model(self, ct_id: str) -> dict[str, Any]:
         return self._post(f"/api/v1/dmgen/dms/{ct_id}/publish/")
 
-    def generate_package(self, ct_id: str) -> dict[str, Any]:
-        """Build the published model's package (free; synchronous)."""
-        return self._post(f"/api/v1/dmgen/dms/{ct_id}/generate/")
+    def generate_package(self, ct_id: str, *, as_job: bool = False) -> dict[str, Any]:
+        """Build the published model's package (free). ``as_job`` answers a job to poll instead of waiting (4.17.0)."""
+        return self._post(f"/api/v1/dmgen/dms/{ct_id}/generate/", {"async": True} if as_job else {})
 
     def download_package(self, ct_id: str, dest_dir: str | Path) -> Path:
         content, name = self._fetch_bytes(f"/api/v1/dmgen/dms/{ct_id}/download_package/")
@@ -239,11 +291,14 @@ class SDCStudioClient:
         path.write_bytes(content)
         return path
 
-    def generate_app(self, ct_id: str, profile: str = "lightweight") -> dict[str, Any]:
-        """Generate the application (free; synchronous). ``profile`` is ``lightweight`` or ``enterprise``."""
+    def generate_app(self, ct_id: str, profile: str = "lightweight", *, as_job: bool = False) -> dict[str, Any]:
+        """Generate the application (free). ``profile`` is ``lightweight`` or ``enterprise``; ``as_job`` answers a job to poll (4.17.0)."""
         if profile not in ("lightweight", "enterprise"):
             raise ValueError("profile must be 'lightweight' or 'enterprise'")
-        return self._post(f"/api/v1/dmgen/dms/{ct_id}/generate_app/", {"profile": profile})
+        payload: dict[str, Any] = {"profile": profile}
+        if as_job:
+            payload["async"] = True
+        return self._post(f"/api/v1/dmgen/dms/{ct_id}/generate_app/", payload)
 
     def download_app(self, ct_id: str, dest_dir: str | Path, profile: str = "lightweight") -> tuple[Path, bool | None]:
         """
