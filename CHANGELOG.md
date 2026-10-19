@@ -6,6 +6,19 @@ of the SDC4 reference model.
 
 ## [Unreleased]
 
+## [4.3.0] - 2026-10-19
+
+### Added
+
+- **`download_package`**, an MCP tool: downloads a model's package with the
+  key into the output directory, which works for a model in a private
+  project, such as the default project `build_model` builds into. `get_model`
+  and the public catalog cover public models only, so an agent could build a
+  model over MCP and not fetch its package. When the model is published and
+  its package not yet built, the tool builds it first (free, once; it needs
+  the right to publish the model); `generate: false` only downloads. The
+  server's instructions name it.
+
 ## [4.2.1] - 2026-10-19
 
 ### Fixed
