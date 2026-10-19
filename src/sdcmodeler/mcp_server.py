@@ -158,6 +158,25 @@ TOOLS: list[dict[str, Any]] = [
         "inputSchema": {"type": "object", "properties": {"job_ct_id": {"type": "string"}}, "required": ["job_ct_id"]},
     },
     {
+        "name": "download_package",
+        "description": (
+            "Download a model's package (the ZIP: schema, XML template and JSON instance of the "
+            "Governed Data Record, JSON-LD, HTML, RDF, SHACL, GQL) into the server's output directory, "
+            "with this key: it works for a model in a private project, such as the one build_model "
+            "just made, where get_model and the public catalog do not. When the model is published "
+            "and its package not yet built, it builds it first (free, once; it needs the right to "
+            "publish the model); generate false only downloads. Free."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "ct_id": {"type": "string"},
+                "generate": {"type": "boolean", "default": True},
+            },
+            "required": ["ct_id"],
+        },
+    },
+    {
         "name": "generate_app",
         "description": (
             "Generate a published model's application (lightweight or enterprise profile; a Django "
@@ -290,6 +309,25 @@ def _handle_job_status(args: dict) -> Any:
     return get_client().job_status(_string(args, "job_ct_id", required=True))
 
 
+def _handle_download_package(args: dict) -> Any:
+    ct_id = _string(args, "ct_id", required=True)
+    generate = args.get("generate", True)
+    if not isinstance(generate, bool):
+        raise ValueError("`generate` must be a boolean.")
+    c = get_client()
+    built_now = False
+    try:
+        path = c.download_package(ct_id, _output_dir)
+    except SDCStudioError as exc:
+        # 404 until the package exists (and for a draft); a published model's package is built once, free.
+        if exc.status != 404 or not generate:
+            raise
+        c.generate_package(ct_id)
+        built_now = True
+        path = c.download_package(ct_id, _output_dir)
+    return {"path": str(path), "built_now": built_now}
+
+
 def _handle_generate_app(args: dict) -> Any:
     ct_id = _string(args, "ct_id", required=True)
     profile = _string(args, "profile", default="lightweight") or "lightweight"
@@ -316,6 +354,7 @@ TOOL_HANDLERS = {
     "estimate_model": _handle_estimate_model,
     "build_model": _handle_build_model,
     "job_status": _handle_job_status,
+    "download_package": _handle_download_package,
     "generate_app": _handle_generate_app,
     "wallet": _handle_wallet,
 }
@@ -364,7 +403,8 @@ def _handle_request(request: Any) -> dict | None:
                 "The modeler's client for SDCStudio. Search the public catalog first and reuse published "
                 "components; estimate before you build and show the person the cost; build only with the "
                 "estimate_id you showed; prefer the model package over the generated application when the "
-                "feature lives inside an existing application. A 402 means the person funds the wallet at "
+                "feature lives inside an existing application; fetch a model's package, including one you just built "
+                "in a private project, with download_package. A 402 means the person funds the wallet at "
                 f"{get_client().base_url}/app/settings?tab=wallet; never try to pay. "
                 + ("A key is configured, so building and downloading are available within its policy."
                    if has_key else "No key is configured: the catalog and estimates work; building needs SDCSTUDIO_API_KEY.")

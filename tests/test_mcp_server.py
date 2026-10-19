@@ -42,7 +42,7 @@ def test_initialize_and_tools_list():
     assert r["result"]["protocolVersion"] == "2025-06-18"
     assert "wallet" in r["result"]["instructions"]
     tools = rpc("tools/list")["result"]["tools"]
-    assert [t["name"] for t in tools] == ["search_components", "list_models", "get_model", "estimate_model", "build_model", "job_status", "generate_app", "wallet"]
+    assert [t["name"] for t in tools] == ["search_components", "list_models", "get_model", "estimate_model", "build_model", "job_status", "download_package", "generate_app", "wallet"]
 
 
 def test_build_needs_the_estimate_the_person_saw(bound):
@@ -114,3 +114,25 @@ def test_build_model_passes_the_flags_and_names_what_to_poll(bound):
     sent = json.loads([c for c in bound.calls if c.url.path.endswith("/assemble/")][-1].content)
     assert sent["generate"] is False and "publish" not in sent
     assert built["requested"] == {"publish": True, "generate": False} and "j9" in built["next"]
+
+
+def test_download_package_fetches_a_private_models_package_with_the_key(bound, tmp_path):
+    bound.on("GET", "/api/v1/dmgen/dms/m1/download_package/", body={"download_url": "https://storage.example/dm-m1.zip", "filename": "dm-m1.zip"})
+    bound.on("GET", "https://storage.example/dm-m1.zip", body=b"PK")
+    out, _ = call("download_package", {"ct_id": "m1"})
+    assert out == {"path": str(tmp_path / "dm-m1.zip"), "built_now": False} and (tmp_path / "dm-m1.zip").exists()
+    assert "authorization" not in bound.calls[-1].headers, "the storage pointer is followed without the key"
+
+
+def test_download_package_builds_a_missing_package_first_unless_told_not_to(bound, tmp_path):
+    bound.on("GET", "/api/v1/dmgen/dms/m2/download_package/", status=404, body={"error": "No package"})
+    _, err = call("download_package", {"ct_id": "m2", "generate": False})
+    assert err and "404" in err
+
+    def built(_request):
+        bound.on("GET", "/api/v1/dmgen/dms/m2/download_package/", body=b"PK", headers={"content-disposition": 'attachment; filename="dm-m2.zip"'})
+        return {"success": True}
+
+    bound.on("POST", "/api/v1/dmgen/dms/m2/generate/", body=built)
+    out, _ = call("download_package", {"ct_id": "m2"})
+    assert out["built_now"] is True and (tmp_path / "dm-m2.zip").exists()

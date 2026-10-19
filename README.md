@@ -84,6 +84,7 @@ A JSON-RPC 2.0 stdio server, no SDK, the way sdcvalidator and sdcgovernance are 
 | `estimate_model` | what a tree would reuse, mint and cost; returns `estimate_id` | no |
 | `build_model` | assemble, publish and generate (or `publish: false` for a draft); needs the `estimate_id` the person saw; refuses past the key's limit | yes |
 | `job_status` | one job by id: status, step, cost so far, the model's links | no |
+| `download_package` | a model's package ZIP with the key, including a model in a private project; builds a missing package first (free, once) unless `generate` is false | no |
 | `generate_app` | generate and download the application; needs `confirm_charge`; 1,500 credits the first time, free after | yes |
 | `wallet` | balance in credits and the key's policy | no |
 
