@@ -77,7 +77,7 @@ def test_a_402_names_the_wallet_page_and_stops(bound):
     bound.on("POST", "/api/v1/dmgen/assemble/", status=402, body={"error": "x", "estimated_cost_credits": 600, "balance_credits": 20})
     est, _ = call("estimate_model", {"title": "Vitals", "tree": TREE})
     _, err = call("build_model", {"estimate_id": est["estimate_id"], "title": "Vitals", "tree": TREE})
-    assert "600 credits" in err and f"{BASE}/app/wallet" in err
+    assert "600 credits" in err and f"{BASE}/app/settings?tab=wallet" in err
 
 
 def test_generate_app_needs_confirmation_and_reports_the_charge(bound, tmp_path):

@@ -365,7 +365,7 @@ def _handle_request(request: Any) -> dict | None:
                 "components; estimate before you build and show the person the cost; build only with the "
                 "estimate_id you showed; prefer the model package over the generated application when the "
                 "feature lives inside an existing application. A 402 means the person funds the wallet at "
-                f"{get_client().base_url}/app/wallet; never try to pay. "
+                f"{get_client().base_url}/app/settings?tab=wallet; never try to pay. "
                 + ("A key is configured, so building and downloading are available within its policy."
                    if has_key else "No key is configured: the catalog and estimates work; building needs SDCSTUDIO_API_KEY.")
             ),
@@ -388,7 +388,7 @@ def _handle_request(request: Any) -> dict | None:
         except InsufficientCredits as exc:
             return _tool_error(req_id, (
                 f"Insufficient credits: this needs {exc.estimated_cost_credits} credits and the wallet has "
-                f"{exc.balance_credits}. The person funds the wallet at {get_client().base_url}/app/wallet; stop here."
+                f"{exc.balance_credits}. The person funds the wallet at {get_client().base_url}/app/settings?tab=wallet; stop here."
             ))
         except KeyPolicyRefused as exc:
             return _tool_error(req_id, f"The API key refused this ({exc.error_type}): {exc}")

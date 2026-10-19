@@ -58,7 +58,9 @@ sdcmodeler models "patient"
 sdcmodeler model <ct_id>
 sdcmodeler artifact <ct_id> xsd --dir ./schemas
 sdcmodeler estimate tree.json --title "Vitals"
-sdcmodeler build tree.json --title "Vitals"
+sdcmodeler build tree.json --title "Vitals" --wait
+sdcmodeler job <job_ct_id>
+sdcmodeler package <ct_id> --dir ./packages
 sdcmodeler app <ct_id> --profile lightweight --dir ./apps
 sdcmodeler wallet
 ```
