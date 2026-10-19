@@ -46,7 +46,7 @@ estimate = c.estimate(tree, "Vitals")       # the server's estimate: reuse, mint
 result = c.assemble("Vitals", tree, estimate_id=estimate["estimate_id"])   # 500 credits plus the mints
 ```
 
-Every leaf existing: the server assembles, publishes and generates the package in one call (`result["mode"] == "reuse"`). Some leaves new: the pipeline runs and `result["job_ct_id"]` is polled with `c.job_status(...)` until `completed`, when the result carries the model's links. The server refuses a build whose tree changed since the estimate.
+Every leaf existing: the server assembles, publishes and generates the package in one call (`result["mode"] == "reuse"`; `published` and `generated` say so). Some leaves new: the pipeline runs and `result["job_ct_id"]` is polled with `c.job_status(...)`, or `c.wait_for_job(...)`, until `completed`, when the job has published and generated as asked and its result carries the model's links. `publish=False` leaves a draft for a person to review. The server refuses a build whose tree changed since the estimate.
 
 A 402 is `InsufficientCredits` with the numbers in credits. A 403 from the key's policy (no `spend` scope, or past its limit) is `KeyPolicyRefused`. The client never funds a wallet; a person does that at the wallet page.
 
@@ -80,7 +80,7 @@ A JSON-RPC 2.0 stdio server, no SDK, the way sdcvalidator and sdcgovernance are 
 | `search_components` | the public catalog by label, type and project | no |
 | `list_models`, `get_model` | published models and their artifact routes | no |
 | `estimate_model` | what a tree would reuse, mint and cost; returns `estimate_id` | no |
-| `build_model` | assemble and publish; needs the `estimate_id` the person saw; refuses past the key's limit | yes |
+| `build_model` | assemble, publish and generate (or `publish: false` for a draft); needs the `estimate_id` the person saw; refuses past the key's limit | yes |
 | `job_status` | one job by id: status, step, cost so far, the model's links | no |
 | `generate_app` | generate and download the application; needs `confirm_charge`; 1,500 credits the first time, free after | yes |
 | `wallet` | balance in credits and the key's policy | no |

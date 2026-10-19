@@ -139,3 +139,26 @@ def test_assemble_creates_the_default_project_once_when_the_modeler_has_none(fak
         "/api/v1/auth/modeler/", "/api/v1/dmgen/projects/", "/api/v1/auth/modeler/update/",
         "/api/v1/dmgen/assemble/", "/api/v1/dmgen/assemble/",
     ]
+
+
+def test_assemble_sends_the_flags_only_when_they_differ_from_the_default(fake):
+    fake.on("POST", "/api/v1/dmgen/assemble/", body={"ct_id": "m1", "published": True, "generated": True})
+    c = fake.client()
+    c.assemble("A", TREE)
+    assert "publish" not in body_of(fake.calls[-1]) and "generate" not in body_of(fake.calls[-1])
+    c.assemble("B", TREE, publish=False)
+    assert body_of(fake.calls[-1])["publish"] is False and body_of(fake.calls[-1])["generate"] is False
+    c.assemble("C", TREE, generate=False)
+    assert "publish" not in body_of(fake.calls[-1]) and body_of(fake.calls[-1])["generate"] is False
+
+
+def test_wait_for_job_polls_until_terminal(fake, monkeypatch):
+    states = iter([{"status": "queued"}, {"status": "running", "step": "modeling"}, {"status": "completed", "result": {"published": True}}])
+    fake.on("GET", "/api/v1/jobs/j1/", body=lambda request: next(states))
+    monkeypatch.setattr("time.sleep", lambda s: None)
+    job = fake.client().wait_for_job("j1", interval=0.01)
+    assert job["status"] == "completed" and job["result"]["published"] is True
+    fake.on("GET", "/api/v1/jobs/j2/", body={"status": "running"})
+    with pytest.raises(TimeoutError) as exc:
+        fake.client().wait_for_job("j2", timeout=0, interval=0.01)
+    assert exc.value.job["status"] == "running"

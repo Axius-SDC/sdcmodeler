@@ -6,6 +6,19 @@ of the SDC4 reference model.
 
 ## [Unreleased]
 
+## [4.2.0] - 2026-10-18
+
+### Added
+
+- **`publish` and `generate` on `assemble`** (SDCStudio 4.17.2), both true by
+  default: the reuse path answers with `published`, `generated` and
+  `model_url`; the mixed path's job publishes bottom-up and builds the package
+  when the pipeline completes, and its result says so. `publish=False` leaves
+  a draft for a person to review. The MCP `build_model` takes both and tells
+  the agent what to poll; the CLI's `build` has `--draft` and `--no-generate`.
+- **`wait_for_job`** polls a job until it completes or fails, backing off;
+  `build --wait` uses it on the mixed path.
+
 ## [4.1.0] - 2026-10-18
 
 ### Changed
