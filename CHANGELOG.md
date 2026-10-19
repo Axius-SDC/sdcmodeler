@@ -6,6 +6,21 @@ of the SDC4 reference model.
 
 ## [Unreleased]
 
+## [4.2.1] - 2026-10-19
+
+### Fixed
+
+- **The local estimate follows SDCStudio 4.17.5's one rule**: 500 for the
+  model (its root cluster included), 100 for every other new cluster, 100 for
+  every new component. A new nested cluster was not counted, so the local
+  figure could be 100 short of the server's. `mode` is the path `assemble/`
+  takes: a new component makes it `mixed`, a new cluster alone does not.
+- **`estimate_id` hashes the trimmed title**, as the server does; a title with
+  a leading or trailing space was refused by `assemble/` as a stale estimate.
+- **The wallet address** the MCP server gives on a 402 is
+  `/app/settings?tab=wallet`; `/app/wallet` does not exist.
+- The README's CLI list includes `job` and `package`.
+
 ## [4.2.0] - 2026-10-18
 
 ### Added

@@ -5,10 +5,10 @@ SDCStudio's prices (Terms of Service, section 6; ``docs/user-guides/wallet-billi
 1,000 credits per dollar; minting a component 100 credits; assembling a model
 500; downloading an application 1,500, once per user per model since 4.16.0;
 settling a record 1,000. The estimate below resolves an assembly tree the way
-the server does: a leaf with ``ct_id`` is reused and free, a leaf with ``label``
-and ``data_type`` is minted and billable. The server's own estimate endpoint,
-when it exists, confirms this; until then this is the number an agent shows
-the person before it builds.
+the server does (SDCStudio 4.17.5, one rule on every path): 500 for the model,
+which covers its root cluster; 100 for every other new cluster; 100 for every
+new component; anything with a ``ct_id`` is reused and free. With a key the
+server's estimate endpoint is used; this is the fallback without one.
 """
 from __future__ import annotations
 
@@ -39,6 +39,8 @@ def _walk(node: dict[str, Any], path: str, reuse: list, mint: list, problems: li
             continue
         if not name:
             problems.append(f"{path}: a cluster needs a label")
+        # A new cluster below the root is minted and billed like a component.
+        mint.append({"path": f"{path}/{name}", "label": name, "data_type": "Cluster"})
         _walk(cluster, f"{path}/{name}", reuse, mint, problems)
 
 
@@ -57,6 +59,7 @@ def estimate_tree(tree: dict[str, Any], title: str = "") -> dict[str, Any]:
     problems: list = []
     _walk(tree, tree.get("label", "root"), reuse, mint, problems)
     mint_credits = MINT_COMPONENT_CREDITS * len(mint)
+    title = (title or "").strip()   # the server hashes the title as its serializer trims it
     canonical = json.dumps({"title": title, "tree": tree}, sort_keys=True, separators=(",", ":"), default=str)
     return {
         "estimate_id": hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:12],
@@ -67,5 +70,6 @@ def estimate_tree(tree: dict[str, Any], title: str = "") -> dict[str, Any]:
         "model_credits": ASSEMBLE_MODEL_CREDITS,
         "mint_credits": mint_credits,
         "total_credits": ASSEMBLE_MODEL_CREDITS + mint_credits,
-        "mode": "mixed" if mint else "reuse",
+        # The path assemble/ takes: a new component makes it mixed, a new cluster alone does not.
+        "mode": "mixed" if any(m["data_type"] != "Cluster" for m in mint) else "reuse",
     }
