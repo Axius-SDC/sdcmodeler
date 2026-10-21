@@ -136,3 +136,21 @@ def test_download_package_builds_a_missing_package_first_unless_told_not_to(boun
     bound.on("POST", "/api/v1/dmgen/dms/m2/generate/", body=built)
     out, _ = call("download_package", {"ct_id": "m2"})
     assert out["built_now"] is True and (tmp_path / "dm-m2.zip").exists()
+
+
+def test_a_problem_the_server_names_is_reported_and_nothing_is_built(bound):
+    """4.3.1: the server's estimate names problems as {path, ct_id, reason}; build_model joined them as strings
+    and failed with a TypeError, reported as a defect in this server instead of the problem."""
+    def server_estimate(request):
+        from sdcmodeler.pricing import estimate_tree
+        body = json.loads(request.content)
+        local = estimate_tree(body["data"], body["title"])
+        return {**local, "problems": [{"path": "data.components[0]", "ct_id": "abc123abc123abc123abc123",
+                                       "reason": "Component not found or not published"}],
+                "wallet": {"balance_credits": 10000, "can_pay": True}, "key": {"remaining_credits": 700, "within_limit": True}}
+    bound.on("POST", "/api/v1/dmgen/assemble/estimate/", body=server_estimate)
+    est, _ = call("estimate_model", {"title": "Vitals", "tree": TREE})
+    _, err = call("build_model", {"estimate_id": est["estimate_id"], "title": "Vitals", "tree": TREE})
+    assert "Component not found or not published" in err and "abc123abc123abc123abc123" in err
+    assert "defect" not in err
+    assert not any(c.url.path.endswith("/assemble/") for c in bound.calls)

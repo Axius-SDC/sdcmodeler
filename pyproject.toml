@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "sdcmodeler"
-version = "4.3.0"
+version = "4.3.1"
 description = "The modeler's client for SDCStudio: search the catalog, estimate, assemble and publish SDC4 data models, generate applications; a CLI and an MCP server over one client"
 license = "Apache-2.0"
 requires-python = ">=3.10"
