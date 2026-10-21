@@ -6,6 +6,15 @@ of the SDC4 reference model.
 
 ## [Unreleased]
 
+## [4.3.1] - 2026-10-21
+
+### Fixed
+
+- `build_model` reported a tree problem as a defect in the server. The server's estimate (SDCStudio 4.17.0)
+  names each problem as `{path, ct_id, reason}`; `build_model` joined them as strings, raised a `TypeError`,
+  and answered "the server could not process this input". It now says what the problem is, and still builds
+  nothing. Found running against an SDCStudioSov install.
+
 ## [4.3.0] - 2026-10-19
 
 ### Added

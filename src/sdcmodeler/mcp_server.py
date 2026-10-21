@@ -265,6 +265,14 @@ def _policy_or_none() -> dict | None:
         return None
 
 
+def _problem_text(problem: Any) -> str:
+    """A problem from the server's estimate is ``{path, ct_id?, reason}``; one from the local walk is a string (4.3.1)."""
+    if isinstance(problem, dict):
+        ct_id = f" ({problem['ct_id']})" if problem.get("ct_id") else ""
+        return f"{problem.get('path', '')}{ct_id}: {problem.get('reason', '')}".strip(": ")
+    return str(problem)
+
+
 def _handle_build_model(args: dict) -> Any:
     estimate_id = _string(args, "estimate_id", required=True)
     title = _string(args, "title", required=True)
@@ -277,7 +285,7 @@ def _handle_build_model(args: dict) -> Any:
             "in this session; run estimate_model, show the person the cost, then build."
         )
     if current["problems"]:
-        raise ValueError("The tree has problems: " + "; ".join(current["problems"]))
+        raise ValueError("The tree has problems: " + "; ".join(_problem_text(p) for p in current["problems"]))
     remaining = None
     if current.get("source") == "server" and (current.get("key") or {}).get("remaining_credits") is not None:
         remaining = current["key"]["remaining_credits"]
