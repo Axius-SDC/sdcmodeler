@@ -17,7 +17,7 @@ servers: sdcvalidator validates, sdcgovernance governs, sdcreader reads,
 sdcmodeler models. It also names the concept SDCStudio already has: every user
 is a Modeler, and the Modeler's projects scope every call.
 """
-__version__ = "4.3.1"
+__version__ = "4.3.2"
 
 from sdcmodeler.client import (  # noqa: E402
     AssemblyRefused,
