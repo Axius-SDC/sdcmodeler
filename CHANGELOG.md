@@ -6,6 +6,14 @@ of the SDC4 reference model.
 
 ## [Unreleased]
 
+## [4.4.1] - 2026-11-02
+
+### Fixed
+
+- `models/index.ts` keys each model by its root element, `dm-<ct_id>`, as SDCStudio's generator 4.1.0 does. Needs SDCStudio 4.26.1, whose gate looks models up this way. A CUID is
+  never a name on its own: one that starts with a digit, written as a bare key, kept the gate from booting. Found
+  writing the ten Cordova models' kits into one project.
+
 ## [4.4.0] - 2026-11-02
 
 ### Added
