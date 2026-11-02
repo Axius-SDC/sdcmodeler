@@ -332,7 +332,7 @@ class SDCStudioClient:
 
     def supabase_kit(self, ct_id: str) -> dict[str, Any]:
         """
-        The published model's governed data kit for Supabase, as data (SDCStudio after 4.25.1): its files by path,
+        The published model's governed data kit for Supabase, as data (SDCStudio 4.26.0): its files by path,
         the base migration and the model's, unversioned, and ``charged``. ``sdcmodeler.kits.write_kit`` writes
         it into a project. Charged as the application is: the first download of a model by a user, kit or
         application, costs 1,500 credits; later ones are free.
