@@ -42,7 +42,7 @@ def test_initialize_and_tools_list():
     assert r["result"]["protocolVersion"] == "2025-06-18"
     assert "wallet" in r["result"]["instructions"]
     tools = rpc("tools/list")["result"]["tools"]
-    assert [t["name"] for t in tools] == ["search_components", "list_models", "get_model", "estimate_model", "build_model", "job_status", "download_package", "generate_app", "wallet"]
+    assert [t["name"] for t in tools] == ["search_components", "list_models", "get_model", "estimate_model", "build_model", "job_status", "download_package", "generate_app", "add_supabase_kit", "wallet"]
 
 
 def test_build_needs_the_estimate_the_person_saw(bound):
@@ -88,6 +88,24 @@ def test_generate_app_needs_confirmation_and_reports_the_charge(bound, tmp_path)
     bound.on("GET", "https://storage.example/app.zip", body=b"PK")
     out, _ = call("generate_app", {"ct_id": "m1", "confirm_charge": True})
     assert out["charged"] is True and out["path"].endswith("app.zip") and (tmp_path / "app.zip").exists()
+
+
+def test_add_supabase_kit_needs_confirmation_and_writes_into_the_project(bound, tmp_path):
+    _, err = call("add_supabase_kit", {"ct_id": "m1"})
+    assert "1500 credits" in err and "confirm_charge" in err
+    _, err = call("add_supabase_kit", {"ct_id": "m1", "project_dir": "missing", "confirm_charge": True})
+    assert "is not a directory" in err
+    (tmp_path / "app").mkdir()
+    bound.on("GET", "/api/v1/dmgen/dms/m1/supabase_kit/", body={
+        "generator": "4.0.0", "models": [{"ctId": "m1", "title": "M1"}], "charged": True,
+        "files": {"supabase/functions/_shared/sdc/models/dm-m1.ts": "x\n"},
+        "base_migration": {"name": "sdc_base.sql", "sql": "-- base\n"},
+        "migrations": [{"ctId": "m1", "name": "sdc_dm_m1.sql", "sql": "-- m1\n"}],
+    })
+    out, _ = call("add_supabase_kit", {"ct_id": "m1", "project_dir": "app", "confirm_charge": True})
+    assert out["charged"] is True and out["project"] == str(tmp_path / "app")
+    assert len(list((tmp_path / "app" / "supabase" / "migrations").glob("*_sdc_dm_m1.sql"))) == 1
+    assert (tmp_path / "app" / "supabase" / "functions" / "_shared" / "sdc" / "models" / "index.ts").exists()
 
 
 def test_malformed_input_is_answered_not_fatal():
