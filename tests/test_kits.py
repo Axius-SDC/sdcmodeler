@@ -60,3 +60,9 @@ def test_a_component_that_differs_is_refused_before_anything_is_written(tmp_path
         write_kit(tmp_path, kit("m2", text="export const ctId = 'changed';\n"), now=NOW)
     assert not (tmp_path / SDC / "models" / "dm-m2.ts").exists()
     assert len(migrations(tmp_path)) == 2
+
+
+def test_a_model_whose_ct_id_starts_with_a_digit_is_a_quoted_key(tmp_path):
+    write_kit(tmp_path, kit("5scaiw897xhuqa1k8sso932e"), now=NOW)
+    index = (tmp_path / SDC / "models" / "index.ts").read_text()
+    assert '  "5scaiw897xhuqa1k8sso932e": dm_5scaiw897xhuqa1k8sso932e,' in index

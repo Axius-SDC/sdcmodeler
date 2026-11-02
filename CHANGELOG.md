@@ -6,6 +6,11 @@ of the SDC4 reference model.
 
 ## [Unreleased]
 
+### Fixed
+
+- A model whose ct_id starts with a digit is now a quoted key in `models/index.ts`; written bare, it kept the gate from
+  booting. Found writing the ten Cordova models' kits into one project.
+
 ## [4.4.0] - 2026-11-02
 
 ### Added
