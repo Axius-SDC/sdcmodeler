@@ -35,6 +35,7 @@ from sdcmodeler.client import (
     SDCStudioClient,
     SDCStudioError,
 )
+from sdcmodeler.kits import KitConflictError, write_kit
 from sdcmodeler.pricing import DOWNLOAD_APP_CREDITS
 
 JSONRPC_VERSION = "2.0"
@@ -197,6 +198,31 @@ TOOLS: list[dict[str, Any]] = [
         },
     },
     {
+        "name": "add_supabase_kit",
+        "description": (
+            "Write a published model's governed data kit into a Supabase project: typed TypeScript for the "
+            "model's records, the gate (an Edge Function that validates every record against the published "
+            "model before storing it) and the migrations. The first call writes the project base too; call "
+            "again for each further model. Components already in the project are never rewritten, and each "
+            "migration is written once, numbered after the project's latest. Then apply them with Supabase's "
+            "own CLI or MCP server (supabase db push; supabase functions deploy gate). The first download of "
+            "a model by this user, kit or application, costs 1,500 credits; later downloads of the same model "
+            "are free. Needs confirm_charge true, after the person has agreed."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "ct_id": {"type": "string"},
+                "project_dir": {
+                    "type": "string",
+                    "description": "The project holding supabase/, relative to the server's output directory. Default: the output directory.",
+                },
+                "confirm_charge": {"type": "boolean", "default": False},
+            },
+            "required": ["ct_id"],
+        },
+    },
+    {
         "name": "wallet",
         "description": "The wallet balance in credits and this key's policy: scopes, spending limit, what it has spent, expiry. Free.",
         "inputSchema": {"type": "object", "properties": {}},
@@ -350,6 +376,23 @@ def _handle_generate_app(args: dict) -> Any:
     return {"generated": generated, "path": str(path), "charged": charged, "profile": profile}
 
 
+def _handle_add_supabase_kit(args: dict) -> Any:
+    ct_id = _string(args, "ct_id", required=True)
+    project = (_output_dir / (_string(args, "project_dir", default="") or ".")).resolve()
+    if not project.is_dir():
+        raise ValueError(f"{project} is not a directory: name the project that holds (or will hold) supabase/")
+    if not args.get("confirm_charge"):
+        raise ValueError(
+            f"add_supabase_kit downloads the model's kit, which costs {DOWNLOAD_APP_CREDITS} credits the first time "
+            "this user downloads this model, kit or application (free after that). Tell the person, and call again "
+            "with confirm_charge true."
+        )
+    kit = get_client().supabase_kit(ct_id)
+    written = write_kit(project, kit)
+    return {"project": str(project), "models": kit["models"], "written": written, "charged": kit.get("charged"),
+            "next": "supabase db push; supabase functions deploy gate"}
+
+
 def _handle_wallet(args: dict) -> Any:
     c = get_client()
     return {"wallet": c.wallet(), "key": c.key_policy()}
@@ -364,6 +407,7 @@ TOOL_HANDLERS = {
     "job_status": _handle_job_status,
     "download_package": _handle_download_package,
     "generate_app": _handle_generate_app,
+    "add_supabase_kit": _handle_add_supabase_kit,
     "wallet": _handle_wallet,
 }
 
@@ -412,7 +456,8 @@ def _handle_request(request: Any) -> dict | None:
                 "components; estimate before you build and show the person the cost; build only with the "
                 "estimate_id you showed; prefer the model package over the generated application when the "
                 "feature lives inside an existing application; fetch a model's package, including one you just built "
-                "in a private project, with download_package. A 402 means the person funds the wallet at "
+                "in a private project, with download_package; for a TypeScript app on Supabase, write the model's kit "
+                "into the project with add_supabase_kit. A 402 means the person funds the wallet at "
                 f"{get_client().base_url}/app/settings?tab=wallet; never try to pay. "
                 + ("A key is configured, so building and downloading are available within its policy."
                    if has_key else "No key is configured: the catalog and estimates work; building needs SDCSTUDIO_API_KEY.")
@@ -440,7 +485,7 @@ def _handle_request(request: Any) -> dict | None:
             ))
         except KeyPolicyRefused as exc:
             return _tool_error(req_id, f"The API key refused this ({exc.error_type}): {exc}")
-        except (AssemblyRefused, SDCStudioError, ValueError) as exc:
+        except (AssemblyRefused, SDCStudioError, KitConflictError, ValueError) as exc:
             return _tool_error(req_id, f"Tool execution error: {exc}")
         except Exception as exc:  # a defect in this server, not in the caller's input
             return _tool_error(req_id, (

@@ -6,6 +6,16 @@ of the SDC4 reference model.
 
 ## [Unreleased]
 
+### Added
+
+- **Supabase kits.** `add_supabase_kit` (MCP) and `sdcmodeler kit <ct_id> --project <dir>` (CLI) write a published
+  model's governed data kit into a Supabase project: typed TypeScript for its records, the gate (an Edge Function
+  that validates every record against the published model) and the migrations. The first model brings the
+  project base; each further model adds its kit and one migration, numbered after the project's latest. A
+  component already in the project is never rewritten, and a conflict is found before anything is written.
+  `SDCStudioClient.supabase_kit()` fetches the kit; `sdcmodeler.kits.write_kit()` writes it. Charged with the
+  application, once per user per model; the tool needs `confirm_charge`. Needs the SDCStudio release after 4.25.1.
+
 ## [4.3.2] - 2026-10-25
 
 ### Security
