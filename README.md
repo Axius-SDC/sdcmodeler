@@ -62,6 +62,7 @@ sdcmodeler build tree.json --title "Vitals" --wait
 sdcmodeler job <job_ct_id>
 sdcmodeler package <ct_id> --dir ./packages
 sdcmodeler app <ct_id> --profile lightweight --dir ./apps
+sdcmodeler kit <ct_id> --project ./my-app
 sdcmodeler wallet
 ```
 
@@ -86,13 +87,14 @@ A JSON-RPC 2.0 stdio server, no SDK, the way sdcvalidator and sdcgovernance are 
 | `job_status` | one job by id: status, step, cost so far, the model's links | no |
 | `download_package` | a model's package ZIP with the key, including a model in a private project; builds a missing package first (free, once) unless `generate` is false | no |
 | `generate_app` | generate and download the application; needs `confirm_charge`; 1,500 credits the first time, free after | yes |
+| `add_supabase_kit` | write a model's Supabase kit into a project (`project_dir`); needs `confirm_charge`; charged with the application, once per model | yes |
 | `wallet` | balance in credits and the key's policy | no |
 
 **The policy lives in the server.** No spend without an estimate shown: `build_model` takes the `estimate_id` that `estimate_model` returned for the same title and tree in this process. Stop at the key's limit: a build whose estimate exceeds what the key may still spend is refused before the server is asked. Never pay: a 402 is reported with the wallet page's address and the tool stops. No tool takes a URL, a key or a payment method as an argument; the key is the environment the server starts with.
 
 ## The package or the application
 
-`get_model` names the artifacts: the XSD 1.1 schema, the instance template, JSON, JSON-LD, SHACL, HTML, GraphQL. The package is a contract with no runtime attached; a feature inside an existing application implements on it, in any language, validating every record locally with [sdcvalidator](https://pypi.org/project/sdcvalidator/). The generated application (lightweight or enterprise profile) is a Django implementation on the same package, right when the feature is a new service. [CordovaOS](https://github.com/Axius-SDC/CordovaOS) is ten of them sharing data with zero integration code.
+`get_model` names the artifacts: the XSD 1.1 schema, the instance template, JSON, JSON-LD, SHACL, HTML, GraphQL. The package is a contract with no runtime attached; a feature inside an existing application implements on it, in any language, validating every record locally with [sdcvalidator](https://pypi.org/project/sdcvalidator/). The generated application (lightweight or enterprise profile) is a Django implementation on the same package, right when the feature is a new service. The Supabase kit is the same for a TypeScript app on Supabase: typed code for the model's records, migrations, and a gate (an Edge Function) that validates every record against the published model before storing it. `sdcmodeler kit` and `add_supabase_kit` write it into the project: the first model brings the project base, each further one adds its kit and one migration, numbered after the project's latest, and a component already in the project is never rewritten. Apply with Supabase's CLI (`supabase db push`, `supabase functions deploy gate`). [CordovaOS](https://github.com/Axius-SDC/CordovaOS) is ten of them sharing data with zero integration code.
 
 ## What is not here
 

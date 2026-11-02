@@ -330,6 +330,15 @@ class SDCStudioClient:
             payload["async"] = True
         return self._post(f"/api/v1/dmgen/dms/{ct_id}/generate_app/", payload)
 
+    def supabase_kit(self, ct_id: str) -> dict[str, Any]:
+        """
+        The published model's governed data kit for Supabase, as data (SDCStudio 4.26.0): its files by path,
+        the base migration and the model's, unversioned, and ``charged``. ``sdcmodeler.kits.write_kit`` writes
+        it into a project. Charged as the application is: the first download of a model by a user, kit or
+        application, costs 1,500 credits; later ones are free.
+        """
+        return self._get(f"/api/v1/dmgen/dms/{ct_id}/supabase_kit/")
+
     def download_app(self, ct_id: str, dest_dir: str | Path, profile: str = "lightweight") -> tuple[Path, bool | None]:
         """
         Save the generated application and return ``(path, charged)``.

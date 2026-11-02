@@ -8,6 +8,7 @@ from pathlib import Path
 
 from sdcmodeler import __version__
 from sdcmodeler.client import SDCStudioClient, SDCStudioError
+from sdcmodeler.kits import KitConflictError, write_kit
 
 
 def _print(data) -> None:
@@ -79,6 +80,13 @@ def build_parser() -> argparse.ArgumentParser:
         return {"generated": generated, "path": str(path), "charged": charged}
     s.set_defaults(func=_app)
 
+    s = sub.add_parser("kit", help="write a published model's Supabase kit into a project (1,500 credits the first time, shared with app)")
+    s.add_argument("ct_id"); s.add_argument("--project", default=".", help="the project holding supabase/ (default: here)")
+    def _kit(c, a):
+        kit = c.supabase_kit(a.ct_id)
+        return {"models": kit["models"], "written": write_kit(a.project, kit), "charged": kit.get("charged")}
+    s.set_defaults(func=_kit)
+
     s = sub.add_parser("wallet", help="the wallet balance in credits and this key's policy")
     s.set_defaults(func=lambda c, a: {"wallet": c.wallet(), "key": c.key_policy()})
 
@@ -102,7 +110,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         _print(args.func(client, args))
         return 0
-    except SDCStudioError as exc:
+    except (SDCStudioError, KitConflictError) as exc:
         sys.stderr.write(f"{exc}\n")
         return 1
     finally:
