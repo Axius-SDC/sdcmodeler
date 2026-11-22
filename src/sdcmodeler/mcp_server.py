@@ -17,7 +17,9 @@ the client deliberately does not (SDCStudio's agent-path PRD, 3.2):
 - **One approval per run.** ``build_and_deliver`` takes the ``estimate_id``
   that ``estimate_model`` returned with the same ``deliver``, whose total covers
   the build and the deliverables, and refuses before the build when the wallet
-  or the key cannot pay that total (``sdcmodeler.deliver``).
+  or the key cannot pay that total (``sdcmodeler.deliver``). A key the person
+  created with auto-spend in SDCStudio (read from the server, never from an
+  argument) runs it without a prior estimate, within the person's settings.
 
 Configuration is the environment the server starts with: ``SDCSTUDIO_API_KEY``
 (the key from Settings, API Keys) and ``SDCSTUDIO_URL`` (the deployment; the
@@ -76,11 +78,13 @@ TOOLS: list[dict[str, Any]] = [
     {
         "name": "search_components",
         "description": (
-            "Search SDCStudio's public catalog of published components by label, with optional "
-            "type (xdstring, xdcount, xdquantity, xdtemporal, cluster, party, ...) and project. "
-            "Reuse first: a published component that fits is free to assemble; minting a new one "
-            "costs 100 credits. Returns ct_id, label, description, component_type, project_name "
-            "and reuse_ref for each result. Free; no key needed."
+            "Search published components by label, with optional type (xdstring, xdcount, xdquantity, "
+            "xdtemporal, cluster, party, ...) and project. With a key, the Modeler's own published "
+            "components come first, private ones included (each result says scope: mine), then the "
+            "public catalog (scope: public); without a key, the public catalog only. Reuse your own, "
+            "then the public catalog, and mint last: a published component that fits is free to "
+            "assemble; minting a new one costs 100 credits. Returns ct_id, label, description, "
+            "component_type, project_name and reuse_ref for each result. Free."
         ),
         "inputSchema": {
             "type": "object",
@@ -88,6 +92,8 @@ TOOLS: list[dict[str, Any]] = [
                 "query": {"type": "string", "description": "Words from the label or description."},
                 "type": {"type": "string", "description": "Optional component type to filter by."},
                 "project": {"type": "string", "description": "Optional project name to filter by, e.g. a public library."},
+                "scope": {"type": "string", "enum": ["mine", "public"],
+                          "description": "Optional: mine (your own first, then public; needs a key) or public. Default: mine with a key."},
                 "page": {"type": "integer", "default": 1},
                 "page_size": {"type": "integer", "default": 25},
             },
@@ -120,9 +126,11 @@ TOOLS: list[dict[str, Any]] = [
             "or {label, data_type} to mint], clusters: [...]}). Returns estimate_id, the reused and "
             "minted leaves, problems in the tree, and total_credits (500 for the model plus 100 per "
             "mint). Show the result to the person; build_model needs the estimate_id. With deliver "
-            "(package, app:lightweight, app:enterprise, kit), it also prices the whole run for "
-            "build_and_deliver under run: the build plus 1,500 credits once for an application or kit, "
-            "the total, and whether the wallet and the key can pay it. Free."
+            "(package, app:lightweight, app:enterprise, kit), it prices the whole run for "
+            "build_and_deliver: the build plus 1,500 credits once for an application or kit, and under "
+            "run the total, what the run will publish (permanently), how it is funded (the balance, or a "
+            "reload the person allows), whether the key runs with auto-spend, and refusals. Pass that "
+            "estimate_id to build_and_deliver; build_model takes an estimate made without deliver. Free."
         ),
         "inputSchema": {
             "type": "object",
@@ -172,14 +180,17 @@ TOOLS: list[dict[str, Any]] = [
             "app:lightweight or app:enterprise (the generated application), kit (the Supabase kit, written into "
             "project_dir). Needs the estimate_id that estimate_model returned for the same title, tree and "
             "deliver, after the person has seen the run's total; that one approval covers the 1,500-credit "
-            "application or kit charge, so no confirm_charge. Refuses before anything is built when the wallet "
-            "or the key cannot pay the total. deliver defaults to $SDCMODELER_DELIVER, else package. Once the "
-            "model is published, a deliverable that fails is reported under failed and the others still run."
+            "application or kit charge, so no confirm_charge. When the person created the key with auto-spend "
+            "in SDCStudio, no estimate_id is needed: the tool estimates and builds in one call and returns the "
+            "estimate in the result. Refuses before anything is built when the run cannot be paid; a 402 names "
+            "the reason (auto-reload off, unconfirmed, at its ceiling, card declined, an organization wallet). "
+            "deliver defaults to $SDCMODELER_DELIVER, else package. Once the model is published, a deliverable "
+            "that fails is reported under failed and the others still run."
         ),
         "inputSchema": {
             "type": "object",
             "properties": {
-                "estimate_id": {"type": "string"},
+                "estimate_id": {"type": "string", "description": "From estimate_model with deliver; not needed with an auto-spend key."},
                 "title": {"type": "string"},
                 "tree": {"type": "object"},
                 "deliver": {"type": "array", "items": {"type": "string", "enum": list(runs.DELIVERABLES) + ["app"]}},
@@ -189,7 +200,7 @@ TOOLS: list[dict[str, Any]] = [
                 },
                 "description": {"type": "string", "default": ""},
             },
-            "required": ["estimate_id", "title", "tree"],
+            "required": ["title", "tree"],
         },
     },
     {
@@ -298,7 +309,8 @@ def _object(args: dict, name: str, *, required: bool = False) -> dict | None:
 def _handle_search_components(args: dict) -> Any:
     c = get_client()
     return c.search_components(_string(args, "query", required=True), type=_string(args, "type") or None,
-                               project=_string(args, "project") or None, page=int(args.get("page") or 1),
+                               project=_string(args, "project") or None, scope=_string(args, "scope") or None,
+                               page=int(args.get("page") or 1),
                                page_size=int(args.get("page_size") or 25))
 
 
@@ -312,7 +324,15 @@ def _handle_get_model(args: dict) -> Any:
 
 def _handle_estimate_model(args: dict) -> Any:
     tree = _object(args, "tree", required=True)
-    estimate = get_client().estimate(tree, _string(args, "title", required=True))
+    title = _string(args, "title", required=True)
+    if args.get("deliver") is not None:
+        # The run's estimate is the answer: its estimate_id binds the deliverables on a server that prices them.
+        plan = runs.plan(get_client(), tree, title, _deliver_arg(args))
+        _plans[(plan["estimate_id"], tuple(plan["deliver"]))] = plan
+        estimate = dict(plan["estimate"])
+        estimate["run"] = {k: v for k, v in plan.items() if k != "estimate"}
+        return estimate
+    estimate = get_client().estimate(tree, title)
     _estimates[estimate["estimate_id"]] = estimate
     key = estimate.get("key") if estimate.get("source") == "server" else None
     if key and key.get("remaining_credits") is not None:
@@ -324,10 +344,6 @@ def _handle_estimate_model(args: dict) -> Any:
             remaining = max(0, policy["spend_limit_credits"] - policy.get("spent_credits", 0))
             estimate["key_remaining_credits"] = remaining
             estimate["within_key_limit"] = estimate["total_credits"] <= remaining
-    if args.get("deliver") is not None:
-        plan = runs.plan(get_client(), tree, _string(args, "title", required=True), _deliver_arg(args))
-        _plans[(plan["estimate_id"], tuple(plan["deliver"]))] = plan
-        estimate["run"] = {k: v for k, v in plan.items() if k != "estimate"}
     return estimate
 
 
@@ -339,11 +355,22 @@ def _deliver_arg(args: dict) -> list[str]:
 
 
 def _handle_build_and_deliver(args: dict) -> Any:
-    estimate_id = _string(args, "estimate_id", required=True)
+    estimate_id = _string(args, "estimate_id")
     title = _string(args, "title", required=True)
     tree = _object(args, "tree", required=True)
     items = _deliver_arg(args)
-    shown = _plans.get((estimate_id, tuple(items)))
+    # Plan now: the wallet and the key may have moved since the person saw the total, and the server
+    # says whether this key runs with auto-spend (a setting only a signed-in person can make).
+    current = runs.plan(get_client(), tree, title, items)
+    shown = _plans.get((estimate_id, tuple(items))) if estimate_id else None
+    if current["auto_spend"] and shown is None:
+        if estimate_id and estimate_id != current["estimate_id"]:
+            raise ValueError("The estimate_id does not match this title, tree and deliver; run estimate_model again.")
+        project = _string(args, "project_dir", default="") or os.environ.get("SDCMODELER_PROJECT_DIR", "")
+        result = runs.run(get_client(), tree, title, current, output_dir=_output_dir,
+                          project_dir=(_output_dir / (project or ".")).resolve(), description=_string(args, "description"))
+        result["authorized_by"] = "auto_spend"
+        return _with_next(result)
     if shown is None:
         raise ValueError(
             "build_and_deliver needs the estimate_id that estimate_model returned with this exact title, tree and "
@@ -352,8 +379,6 @@ def _handle_build_and_deliver(args: dict) -> Any:
         )
     project = _string(args, "project_dir", default="") or os.environ.get("SDCMODELER_PROJECT_DIR", "")
     project_dir = (_output_dir / (project or ".")).resolve()
-    # Plan again: the wallet and the key may have moved since the person saw the total.
-    current = runs.plan(get_client(), tree, title, items)
     if current["estimate_id"] != estimate_id:
         raise ValueError("The title or the tree changed since the estimate; run estimate_model again.")
     if current["total_credits"] != shown["total_credits"]:
@@ -363,11 +388,19 @@ def _handle_build_and_deliver(args: dict) -> Any:
         )
     result = runs.run(get_client(), tree, title, current, output_dir=_output_dir, project_dir=project_dir,
                       description=_string(args, "description"))
+    result["authorized_by"] = "estimate_shown"
+    return _with_next(result)
+
+
+def _with_next(result: dict) -> dict:
+    if result.get("status") == "in_flight":
+        return result   # its own next: poll the job, never build again
     if result["failed"]:
         result["next"] = (
-            "The model is published. Fetch what failed with its own tool (download_package, generate_app, "
-            "add_supabase_kit); the application or kit charge is made once per model, so a retry after a "
-            "charged download is free."
+            "The model is published; do not build it again. Fetch what failed with its own tool "
+            "(download_package, generate_app, add_supabase_kit) once the person agrees: the application or "
+            "kit charge is made once per model, so it is free if the run already paid it, and 1,500 credits "
+            "if it did not."
         )
     return result
 
@@ -541,14 +574,15 @@ def _handle_request(request: Any) -> dict | None:
             "capabilities": {"tools": {"listChanged": False}},
             "serverInfo": {"name": SERVER_NAME, "version": SERVER_VERSION},
             "instructions": (
-                "The modeler's client for SDCStudio. Search the public catalog first and reuse published "
-                "components; estimate before you build and show the person the cost; build only with the "
+                "The modeler's client for SDCStudio. Search first and reuse: your own published components, "
+                "then the public catalog, and mint last; estimate before you build and show the person the cost; build only with the "
                 "estimate_id you showed; for a whole run (build, publish, then the package, application or kit), "
-                "estimate_model with deliver, show the run's total, then build_and_deliver; prefer the model package over the generated application when the "
+                "estimate_model with deliver, show the run's total, then build_and_deliver (a key the person "
+                "made with auto-spend may run it without the estimate; the result carries it); prefer the model package over the generated application when the "
                 "feature lives inside an existing application; fetch a model's package, including one you just built "
                 "in a private project, with download_package; for a TypeScript app on Supabase, write the model's kit "
-                "into the project with add_supabase_kit. A 402 means the person funds the wallet at "
-                f"{get_client().base_url}/app/settings?tab=wallet; never try to pay. "
+                "into the project with add_supabase_kit. A 402 means the person acts at "
+                f"{get_client().base_url}/app/settings?tab=wallet (fund it, or fix what its reason names); never try to pay. "
                 + ("A key is configured, so building and downloading are available within its policy."
                    if has_key else "No key is configured: the catalog and estimates work; building needs SDCSTUDIO_API_KEY.")
             ),
@@ -569,6 +603,11 @@ def _handle_request(request: Any) -> dict | None:
             result = handler(tool_args)
             return _jsonrpc_response(req_id, {"content": [{"type": "text", "text": json.dumps(result, default=str)}]})
         except InsufficientCredits as exc:
+            if exc.reason:   # a run the server could not fund: it says why; nothing was published or charged
+                return _tool_error(req_id, (
+                    f"Not funded ({exc.reason}): {exc} "
+                    + runs.not_funded_text(get_client(), exc.reason, exc.wallet_url) + " Stop here; never try to pay."
+                ))
             return _tool_error(req_id, (
                 f"Insufficient credits: this needs {exc.estimated_cost_credits} credits and the wallet has "
                 f"{exc.balance_credits}. The person funds the wallet at {get_client().base_url}/app/settings?tab=wallet; stop here."

@@ -21,6 +21,8 @@ MINT_COMPONENT_CREDITS = 100
 ASSEMBLE_MODEL_CREDITS = 500
 DOWNLOAD_APP_CREDITS = 1500
 SETTLE_CREDITS = 1000
+#: An application or a kit: one charge, once per user per model, covers them all.
+CHARGED_DELIVERABLES = frozenset({"app:lightweight", "app:enterprise", "kit"})
 
 
 def _walk(node: dict[str, Any], path: str, reuse: list, mint: list, problems: list) -> None:
@@ -44,7 +46,7 @@ def _walk(node: dict[str, Any], path: str, reuse: list, mint: list, problems: li
         _walk(cluster, f"{path}/{name}", reuse, mint, problems)
 
 
-def estimate_tree(tree: dict[str, Any], title: str = "") -> dict[str, Any]:
+def estimate_tree(tree: dict[str, Any], title: str = "", deliver: list[str] | None = None) -> dict[str, Any]:
     """
     Resolve an assembly tree into what is reused, what would be minted, and the cost in credits.
 
@@ -53,6 +55,12 @@ def estimate_tree(tree: dict[str, Any], title: str = "") -> dict[str, Any]:
     twelve hex characters of the SHA-256 of the canonical tree and title; the
     MCP server's ``build_model`` requires it, so a build always follows the
     estimate the person saw.
+
+    ``deliver`` (a normalized list: package, app:lightweight, app:enterprise,
+    kit, in that order) joins the id when it is non-empty, as SDCStudio's
+    ``estimate_id_for`` does since the build-and-deliver release, and adds
+    ``deliver``, ``deliver_credits`` and ``build_credits``, with
+    ``total_credits`` covering both.
     """
     reuse: list = []
     mint: list = []
@@ -60,8 +68,13 @@ def estimate_tree(tree: dict[str, Any], title: str = "") -> dict[str, Any]:
     _walk(tree, tree.get("label", "root"), reuse, mint, problems)
     mint_credits = MINT_COMPONENT_CREDITS * len(mint)
     title = (title or "").strip()   # the server hashes the title as its serializer trims it
-    canonical = json.dumps({"title": title, "tree": tree}, sort_keys=True, separators=(",", ":"), default=str)
-    return {
+    body: dict[str, Any] = {"title": title, "tree": tree}
+    if deliver:
+        body["deliver"] = list(deliver)
+    canonical = json.dumps(body, sort_keys=True, separators=(",", ":"), default=str)
+    build_credits = ASSEMBLE_MODEL_CREDITS + mint_credits
+    deliver_credits = DOWNLOAD_APP_CREDITS if any(d in CHARGED_DELIVERABLES for d in deliver or []) else 0
+    out = {
         "estimate_id": hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:12],
         "title": title,
         "reuse": reuse,
@@ -69,7 +82,10 @@ def estimate_tree(tree: dict[str, Any], title: str = "") -> dict[str, Any]:
         "problems": problems,
         "model_credits": ASSEMBLE_MODEL_CREDITS,
         "mint_credits": mint_credits,
-        "total_credits": ASSEMBLE_MODEL_CREDITS + mint_credits,
+        "total_credits": build_credits + deliver_credits,
         # The path assemble/ takes: a new component makes it mixed, a new cluster alone does not.
         "mode": "mixed" if any(m["data_type"] != "Cluster" for m in mint) else "reuse",
     }
+    if deliver:
+        out.update({"deliver": list(deliver), "deliver_credits": deliver_credits, "build_credits": build_credits})
+    return out

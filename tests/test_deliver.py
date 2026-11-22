@@ -65,7 +65,8 @@ def test_plan_adds_one_application_charge_for_an_app_and_a_kit(fake):
 
 def test_plan_refuses_a_run_the_wallet_or_the_key_cannot_pay(fake):
     p = runs.plan(scripted(fake, balance=2000).client(), MIXED_TREE, "Vitals", "kit")
-    assert p["refusals"] == ["The run needs 2100 credits and the wallet has 2000."]
+    assert len(p["refusals"]) == 1 and p["refusals"][0].startswith("The run needs 2100 credits and the wallet has 2000.")
+    assert "/app/settings?tab=wallet (fund the wallet)" in p["refusals"][0]
     p = runs.plan(scripted(fake, remaining=1000).client(), MIXED_TREE, "Vitals", "kit")
     assert p["refusals"] == ["The run needs 2100 credits and this key may still spend 1000."]
 
@@ -199,7 +200,7 @@ def test_ship_yes_runs_and_delivers(cli_client, tmp_path, capsys):
     tree = tmp_path / "tree.json"; tree.write_text(json.dumps(REUSE_TREE))
     assert main(["ship", str(tree), "--title", "Vitals", "--deliver", "package", "--dir", str(tmp_path), "--yes"]) == 0
     out = json.loads(capsys.readouterr().out)
-    assert out["ct_id"] == "m1" and (tmp_path / "dm-m1.zip").exists()
+    assert out["ct_id"] == "m1" and (tmp_path / "dm-m1.zip").exists() and out["authorized_by"] == "yes_flag"
 
 
 def test_ship_exits_2_when_a_deliverable_fails_after_publishing(cli_client, tmp_path, capsys):

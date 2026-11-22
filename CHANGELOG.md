@@ -17,6 +17,27 @@ of the SDC4 reference model.
   default to `SDCMODELER_DELIVER`, the kit's project to `SDCMODELER_PROJECT_DIR`. Once the model is published, a
   deliverable that fails is reported under `failed` and the others still run; `ship` exits 2. `sdcmodeler.deliver`
   holds the logic for both. Phase 1 of SDCStudio's build-and-deliver PRD: composed from SDCStudio's existing calls.
+- **The run on the server, where SDCStudio offers it** (phase 4; SDCStudio's build-and-deliver release, PR #1025).
+  When the server's estimate prices deliverables, `build_and_deliver` and `ship` send `deliver` to the estimate and
+  to `assemble/`: SDCStudio funds and holds the whole run before the first publish, reloads when the person allows
+  it, delivers each item from the hold, and sdcmodeler downloads what is ready (an application without generating
+  it again) and writes the kit. A failed item is reported, not fetched outside the run. A short balance is refused
+  only when the estimate says no reload covers it. Against an older deployment the run is composed as before.
+- **Auto-spend.** A key the person created with auto-spend (read from the server, never from an argument) runs
+  `build_and_deliver` without a prior estimate; the result carries the estimate and `authorized_by`. `ship` still
+  asks at the terminal unless `--yes`.
+- **Your own components first.** `search_components` (client and MCP) and `sdcmodeler search` take `scope`
+  (`mine`: your own published components, private included, then the public catalog; `public`); with a key the
+  server's default is `mine`.
+- `estimate_id` binds `deliver` when there is one, locally as on the server. `estimate_model` with `deliver` now
+  answers the run's estimate, whose `estimate_id` is the one `build_and_deliver` takes.
+- `InsufficientCredits` carries the server's `reason`, `shortfall_credits` and `wallet_url`; the MCP error names
+  the reason and what the person does about it, as does the refusal before the build when the estimate says the
+  run cannot be funded (the text people see most). The key's limit counts its `reserved_credits`. `ship`'s result
+  says `authorized_by` (`prompt` or `yes_flag`).
+- A run still building when the wait ends (a timeout, or the job status unreachable) returns `status: in_flight`
+  with the job's id and "do not build again", rather than an error: `assemble/` has funded it and the server
+  finishes it. `ship` exits 3.
 
 ### Documentation
 

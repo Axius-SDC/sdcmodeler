@@ -81,7 +81,7 @@ A JSON-RPC 2.0 stdio server, no SDK, the way sdcvalidator and sdcgovernance are 
 
 | Tool | Does | Spends |
 |---|---|---|
-| `search_components` | the public catalog by label, type and project | no |
+| `search_components` | published components by label, type and project: with a key your own first (private included, `scope: mine`), then the public catalog | no |
 | `list_models`, `get_model` | published models and their artifact routes | no |
 | `estimate_model` | what a tree would reuse, mint and cost; returns `estimate_id`; with `deliver`, the whole run's total and whether the wallet and the key can pay it | no |
 | `build_model` | assemble, publish and generate (or `publish: false` for a draft); needs the `estimate_id` the person saw; refuses past the key's limit | yes |
@@ -107,6 +107,22 @@ The account holder does this in SDCStudio at [sdcstudio.axius-sdc.com](https://s
 1. Fund the wallet. Building is paid in credits, 1,000 to the dollar. sdcmodeler never adds funds; a person does that at the wallet page.
 2. Create one API key per developer or agent in Settings, API Keys. Without the `spend` scope a key can search, estimate, read models and download packages. With it, the key's spending limit caps what that holder may spend.
 3. Check a key at any time with `sdcmodeler wallet`: the balance and that key's policy.
+
+On an SDCStudio deployment with the build-and-deliver release, three more settings decide how far an agent goes without asking. A signed-in person makes all three; a key can spend within them and can never change them:
+
+- **Auto-spend on the key.** The agent runs `build_and_deliver` without a person approving each estimate. A spending limit stays optional: with none, the agent spends in the wallet's reload amounts, under the monthly maximum below.
+- **Auto-reload on the wallet, confirmed.** When a run needs more than the balance, SDCStudio tops the wallet up from the saved card, in the configured amount, before anything is published. A key may trigger a reload only after the person has confirmed auto-reload, and the person gets one email per reload a key triggers.
+- **A monthly auto-reload maximum.** The most auto-reload adds in a calendar month. A wallet's first funding sets it to four times that amount, and sets the reload amount to the amount itself ($10 funded: $10 reloads, at most $40 a month).
+
+| Key | Auto-reload | A run |
+|---|---|---|
+| no `spend` | any | searches, estimates, reads models, downloads packages; no charge |
+| `spend` | off | the person approves each estimate; a short balance stops it before anything is published |
+| `spend` | confirmed | the person approves each estimate; a short balance is topped up first |
+| `spend` + auto-spend | off | no per-run approval; a short balance stops it before anything is published |
+| `spend` + auto-spend | confirmed | no per-run approval; a short balance is topped up first, within the monthly maximum |
+
+Organization wallets never auto-reload; the organization's admin sets each member's limit.
 
 ### With a coding agent
 
@@ -156,6 +172,8 @@ sdcmodeler ship tree.json --title "Vitals" --deliver package,kit --project ./my-
 
 The total covers the build and the deliverables: 1,500 credits once when they include an application or a kit, since one charge covers both. A run the wallet or the key cannot pay is refused before anything is built. Once the model is published, a deliverable that fails is reported under `failed`, the others still run, and `ship` exits 2; fetch the failed one with its own command. `--yes` approves without the prompt, for scripts.
 
+On a deployment with the build-and-deliver release, SDCStudio does the run itself: it funds and holds the whole total before the first publish (a reload included, when the person allows one), delivers each item from the hold, and sdcmodeler downloads what is ready and writes the kit. On an older deployment sdcmodeler composes the run from the calls it already has. Which one is decided by what the server's estimate answers, never by a setting. With an auto-spend key, `build_and_deliver` needs no prior estimate and returns the estimate in its result; `ship` still asks at the terminal unless `--yes`.
+
 The deliverables can live in the agent's settings instead of each call: `SDCMODELER_DELIVER` (for example `package,kit`), `SDCMODELER_OUTPUT_DIR` for the package and application, and `SDCMODELER_PROJECT_DIR` for the kit, in the environment of the CLI or of the MCP server's configuration.
 
 ### What it costs
@@ -178,7 +196,7 @@ Publishing locks a model permanently; that is what lets every Governed Data Reco
 
 | You see | It means | Do this |
 |---|---|---|
-| 402, `InsufficientCredits` | The wallet cannot cover the build; cost and balance are reported in credits | Add funds at the wallet page, then build again |
+| 402, `InsufficientCredits` | The wallet cannot cover the build; cost and balance are reported in credits. A run also says why (`reason`): `auto_reload_off`, `no_card`, `auto_reload_unconfirmed`, `ceiling`, `declined`, `reload_failed`, `organization_wallet`, `insufficient_funds`. Nothing was published or charged | Add funds at the wallet page, or fix what the reason names (turn on or confirm auto-reload, save or update the card, raise the monthly maximum, ask the organization admin), then run again |
 | 403, `KeyPolicyRefused` | The key lacks a scope the call needs, or is past its spending limit | Ask the account holder to adjust the key |
 | 409, stale estimate (`AssemblyRefused`) | The tree changed after the estimate | Estimate again and build with the new id |
 | 409, retired component (`AssemblyRefused`) | The tree reuses a retired component | Search for its replacement and update the tree |

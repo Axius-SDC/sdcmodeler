@@ -29,19 +29,31 @@ def _ship(c, a):
         return shown
     if plan["refusals"]:
         raise runs.RunRefused("Nothing was built. " + " ".join(plan["refusals"]))
+    authorized_by = "yes_flag" if a.yes else "prompt"
     if not a.yes:
         sys.stderr.write(
             f"{plan['title']}: {plan['build_credits']} credits to build and publish into {plan['publishes_into']}"
             + (f", {plan['deliver_credits']} for {', '.join(i for i in plan['deliver'] if i in runs.CHARGED)}" if plan["deliver_credits"] else "")
             + f"; {plan['total_credits']} in all. Deliver: {', '.join(plan['deliver']) or 'nothing'}.\n"
-            "Publishing is permanent. Proceed? [y/N] "
+            + _funding_line(plan)
+            + "Publishing is permanent. Proceed? [y/N] "
         )
         sys.stderr.flush()
         if not sys.stdin.isatty() or sys.stdin.readline().strip().lower() not in ("y", "yes"):
             raise runs.RunRefused("Not approved; nothing was built. Use --yes to approve without the prompt.")
     out_dir = a.dir or os.environ.get("SDCMODELER_OUTPUT_DIR") or "."
     project = a.project or os.environ.get("SDCMODELER_PROJECT_DIR") or out_dir
-    return runs.run(c, tree, a.title, plan, output_dir=out_dir, project_dir=project, description=a.description)
+    result = runs.run(c, tree, a.title, plan, output_dir=out_dir, project_dir=project, description=a.description)
+    result["authorized_by"] = authorized_by
+    return result
+
+
+def _funding_line(plan) -> str:
+    reload = (plan.get("funding") or {}).get("auto_reload") or {}
+    if plan.get("funding") and not plan["funding"].get("covered") and reload.get("would_cover"):
+        return (f"The wallet is {plan['funding'].get('shortfall_credits')} credits short: auto-reload will add "
+                f"${reload.get('reload_total_usd')} ({reload.get('reloads_needed')} reload(s)) before anything is published.\n")
+    return ""
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -56,7 +68,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     s = sub.add_parser("search", help="search the public catalog of published components")
     s.add_argument("query"); s.add_argument("--type"); s.add_argument("--project"); s.add_argument("--page-size", type=int, default=25)
-    s.set_defaults(func=lambda c, a: c.search_components(a.query, type=a.type, project=a.project, page_size=a.page_size))
+    s.add_argument("--scope", choices=["mine", "public"], default=None,
+                   help="mine: your own published components first, then public (needs a key; the default with one); public: the catalog only")
+    s.set_defaults(func=lambda c, a: c.search_components(a.query, type=a.type, project=a.project, scope=a.scope, page_size=a.page_size))
 
     s = sub.add_parser("models", help="published models in the public catalog")
     s.add_argument("query", nargs="?", default="")
@@ -145,7 +159,10 @@ def main(argv: list[str] | None = None) -> int:
     try:
         result = args.func(client, args)
         _print(result)
-        # ship: the model is published but a deliverable failed; a script should notice.
+        # ship: 3 when the run is still building on the server (do not run it again), 2 when the model is
+        # published but a deliverable failed; a script should notice either.
+        if isinstance(result, dict) and result.get("status") == "in_flight":
+            return 3
         return 2 if isinstance(result, dict) and result.get("failed") else 0
     except (SDCStudioError, KitConflictError, runs.RunRefused) as exc:
         sys.stderr.write(f"{exc}\n")
