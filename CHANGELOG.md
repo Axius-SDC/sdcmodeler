@@ -6,6 +6,8 @@ of the SDC4 reference model.
 
 ## [Unreleased]
 
+## [4.5.0] - 2026-11-22
+
 ### Added
 
 - **Build and deliver in one run.** `build_and_deliver` (MCP) and `sdcmodeler ship` (CLI) build the model, publish it
@@ -17,7 +19,7 @@ of the SDC4 reference model.
   default to `SDCMODELER_DELIVER`, the kit's project to `SDCMODELER_PROJECT_DIR`. Once the model is published, a
   deliverable that fails is reported under `failed` and the others still run; `ship` exits 2. `sdcmodeler.deliver`
   holds the logic for both. Phase 1 of SDCStudio's build-and-deliver PRD: composed from SDCStudio's existing calls.
-- **The run on the server, where SDCStudio offers it** (phase 4; SDCStudio's build-and-deliver release, PR #1025).
+- **The run on the server, where SDCStudio offers it** (phase 4; SDCStudio 4.27.0).
   When the server's estimate prices deliverables, `build_and_deliver` and `ship` send `deliver` to the estimate and
   to `assemble/`: SDCStudio funds and holds the whole run before the first publish, reloads when the person allows
   it, delivers each item from the hold, and sdcmodeler downloads what is ready (an application without generating
