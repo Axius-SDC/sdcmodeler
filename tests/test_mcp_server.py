@@ -42,7 +42,7 @@ def test_initialize_and_tools_list():
     assert r["result"]["protocolVersion"] == "2025-06-18"
     assert "wallet" in r["result"]["instructions"]
     tools = rpc("tools/list")["result"]["tools"]
-    assert [t["name"] for t in tools] == ["search_components", "list_models", "get_model", "estimate_model", "build_model", "job_status", "download_package", "generate_app", "add_supabase_kit", "wallet"]
+    assert [t["name"] for t in tools] == ["search_components", "list_models", "get_model", "estimate_model", "build_model", "build_and_deliver", "job_status", "download_package", "generate_app", "add_supabase_kit", "wallet"]
 
 
 def test_build_needs_the_estimate_the_person_saw(bound):

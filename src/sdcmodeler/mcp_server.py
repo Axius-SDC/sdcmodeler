@@ -14,6 +14,10 @@ the client deliberately does not (SDCStudio's agent-path PRD, 3.2):
   the server is asked.
 - **Never pay.** A 402 is reported with the wallet page's address and the tool
   stops. No tool takes a URL or a payment method.
+- **One approval per run.** ``build_and_deliver`` takes the ``estimate_id``
+  that ``estimate_model`` returned with the same ``deliver``, whose total covers
+  the build and the deliverables, and refuses before the build when the wallet
+  or the key cannot pay that total (``sdcmodeler.deliver``).
 
 Configuration is the environment the server starts with: ``SDCSTUDIO_API_KEY``
 (the key from Settings, API Keys) and ``SDCSTUDIO_URL`` (the deployment; the
@@ -35,6 +39,7 @@ from sdcmodeler.client import (
     SDCStudioClient,
     SDCStudioError,
 )
+from sdcmodeler import deliver as runs
 from sdcmodeler.kits import KitConflictError, write_kit
 from sdcmodeler.pricing import DOWNLOAD_APP_CREDITS
 
@@ -47,6 +52,8 @@ SERVER_VERSION = __version__
 _client: SDCStudioClient | None = None
 #: estimate_id -> the estimate, for this process: a build must follow an estimate the person saw.
 _estimates: dict[str, dict[str, Any]] = {}
+#: (estimate_id, deliverables) -> the run's plan, for this process: build_and_deliver follows the total the person saw.
+_plans: dict[tuple[str, tuple[str, ...]], dict[str, Any]] = {}
 _output_dir: Path = Path(os.environ.get("SDCMODELER_OUTPUT_DIR", ".")).resolve()
 
 
@@ -57,6 +64,7 @@ def configure(client: SDCStudioClient | None = None, output_dir: str | Path | No
     if output_dir is not None:
         _output_dir = Path(output_dir).resolve()
     _estimates.clear()
+    _plans.clear()
     return _client
 
 
@@ -111,13 +119,20 @@ TOOLS: list[dict[str, Any]] = [
             "money moves. Takes the title and the assembly tree ({label, components: [{ct_id} to reuse "
             "or {label, data_type} to mint], clusters: [...]}). Returns estimate_id, the reused and "
             "minted leaves, problems in the tree, and total_credits (500 for the model plus 100 per "
-            "mint). Show the result to the person; build_model needs the estimate_id. Free."
+            "mint). Show the result to the person; build_model needs the estimate_id. With deliver "
+            "(package, app:lightweight, app:enterprise, kit), it also prices the whole run for "
+            "build_and_deliver under run: the build plus 1,500 credits once for an application or kit, "
+            "the total, and whether the wallet and the key can pay it. Free."
         ),
         "inputSchema": {
             "type": "object",
             "properties": {
                 "title": {"type": "string"},
                 "tree": {"type": "object", "description": "The assembly tree."},
+                "deliver": {
+                    "type": "array", "items": {"type": "string", "enum": list(runs.DELIVERABLES) + ["app"]},
+                    "description": "Optional: what build_and_deliver will deliver; prices the whole run.",
+                },
             },
             "required": ["title", "tree"],
         },
@@ -145,6 +160,34 @@ TOOLS: list[dict[str, Any]] = [
                 "contextual": {"type": "object", "description": "Optional contextual component references (audit, attestation, party, subject, provider, participation, protocol, workflow, acs)."},
                 "publish": {"type": "boolean", "default": True, "description": "Publish the clusters and the model (false leaves a draft for a person to review)."},
                 "generate": {"type": "boolean", "default": True, "description": "Build the package after publishing (needs publish)."},
+            },
+            "required": ["estimate_id", "title", "tree"],
+        },
+    },
+    {
+        "name": "build_and_deliver",
+        "description": (
+            "One run: assemble the model, publish it and every new component into the Modeler's private default "
+            "project, wait for the build, then deliver each item of deliver: package (into the output directory), "
+            "app:lightweight or app:enterprise (the generated application), kit (the Supabase kit, written into "
+            "project_dir). Needs the estimate_id that estimate_model returned for the same title, tree and "
+            "deliver, after the person has seen the run's total; that one approval covers the 1,500-credit "
+            "application or kit charge, so no confirm_charge. Refuses before anything is built when the wallet "
+            "or the key cannot pay the total. deliver defaults to $SDCMODELER_DELIVER, else package. Once the "
+            "model is published, a deliverable that fails is reported under failed and the others still run."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "estimate_id": {"type": "string"},
+                "title": {"type": "string"},
+                "tree": {"type": "object"},
+                "deliver": {"type": "array", "items": {"type": "string", "enum": list(runs.DELIVERABLES) + ["app"]}},
+                "project_dir": {
+                    "type": "string",
+                    "description": "For kit: the project holding supabase/, relative to the output directory. Default: $SDCMODELER_PROJECT_DIR, else the output directory.",
+                },
+                "description": {"type": "string", "default": ""},
             },
             "required": ["estimate_id", "title", "tree"],
         },
@@ -281,7 +324,52 @@ def _handle_estimate_model(args: dict) -> Any:
             remaining = max(0, policy["spend_limit_credits"] - policy.get("spent_credits", 0))
             estimate["key_remaining_credits"] = remaining
             estimate["within_key_limit"] = estimate["total_credits"] <= remaining
+    if args.get("deliver") is not None:
+        plan = runs.plan(get_client(), tree, _string(args, "title", required=True), _deliver_arg(args))
+        _plans[(plan["estimate_id"], tuple(plan["deliver"]))] = plan
+        estimate["run"] = {k: v for k, v in plan.items() if k != "estimate"}
     return estimate
+
+
+def _deliver_arg(args: dict) -> list[str]:
+    value = args.get("deliver")
+    if value is not None and not isinstance(value, list):
+        raise ValueError("`deliver` must be an array of strings.")
+    return runs.parse_deliver(value)
+
+
+def _handle_build_and_deliver(args: dict) -> Any:
+    estimate_id = _string(args, "estimate_id", required=True)
+    title = _string(args, "title", required=True)
+    tree = _object(args, "tree", required=True)
+    items = _deliver_arg(args)
+    shown = _plans.get((estimate_id, tuple(items)))
+    if shown is None:
+        raise ValueError(
+            "build_and_deliver needs the estimate_id that estimate_model returned with this exact title, tree and "
+            f"deliver ({', '.join(items) or 'nothing'}) in this session; run estimate_model with deliver, show the "
+            "person the run's total, then build."
+        )
+    project = _string(args, "project_dir", default="") or os.environ.get("SDCMODELER_PROJECT_DIR", "")
+    project_dir = (_output_dir / (project or ".")).resolve()
+    # Plan again: the wallet and the key may have moved since the person saw the total.
+    current = runs.plan(get_client(), tree, title, items)
+    if current["estimate_id"] != estimate_id:
+        raise ValueError("The title or the tree changed since the estimate; run estimate_model again.")
+    if current["total_credits"] != shown["total_credits"]:
+        raise ValueError(
+            f"The run now costs {current['total_credits']} credits, not the {shown['total_credits']} the person saw; "
+            "show them the new estimate."
+        )
+    result = runs.run(get_client(), tree, title, current, output_dir=_output_dir, project_dir=project_dir,
+                      description=_string(args, "description"))
+    if result["failed"]:
+        result["next"] = (
+            "The model is published. Fetch what failed with its own tool (download_package, generate_app, "
+            "add_supabase_kit); the application or kit charge is made once per model, so a retry after a "
+            "charged download is free."
+        )
+    return result
 
 
 def _policy_or_none() -> dict | None:
@@ -404,6 +492,7 @@ TOOL_HANDLERS = {
     "get_model": _handle_get_model,
     "estimate_model": _handle_estimate_model,
     "build_model": _handle_build_model,
+    "build_and_deliver": _handle_build_and_deliver,
     "job_status": _handle_job_status,
     "download_package": _handle_download_package,
     "generate_app": _handle_generate_app,
@@ -454,7 +543,8 @@ def _handle_request(request: Any) -> dict | None:
             "instructions": (
                 "The modeler's client for SDCStudio. Search the public catalog first and reuse published "
                 "components; estimate before you build and show the person the cost; build only with the "
-                "estimate_id you showed; prefer the model package over the generated application when the "
+                "estimate_id you showed; for a whole run (build, publish, then the package, application or kit), "
+                "estimate_model with deliver, show the run's total, then build_and_deliver; prefer the model package over the generated application when the "
                 "feature lives inside an existing application; fetch a model's package, including one you just built "
                 "in a private project, with download_package; for a TypeScript app on Supabase, write the model's kit "
                 "into the project with add_supabase_kit. A 402 means the person funds the wallet at "

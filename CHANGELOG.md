@@ -6,6 +6,24 @@ of the SDC4 reference model.
 
 ## [Unreleased]
 
+### Added
+
+- **Build and deliver in one run.** `build_and_deliver` (MCP) and `sdcmodeler ship` (CLI) build the model, publish it
+  and every new component into the Modeler's private default project, wait for the job, then deliver the package,
+  the application (lightweight or enterprise) or the Supabase kit, one or several. One approval of the run's total
+  covers the build and the application or kit charge (1,500 credits once; one charge covers both), so the tool
+  needs no `confirm_charge`. A run the wallet or the key cannot pay is refused before anything is built.
+  `estimate_model` takes `deliver` and returns the run's total under `run`; `ship --plan` prints it. Deliverables
+  default to `SDCMODELER_DELIVER`, the kit's project to `SDCMODELER_PROJECT_DIR`. Once the model is published, a
+  deliverable that fails is reported under `failed` and the others still run; `ship` exits 2. `sdcmodeler.deliver`
+  holds the logic for both. Phase 1 of SDCStudio's build-and-deliver PRD: composed from SDCStudio's existing calls.
+
+### Documentation
+
+- README: a walkthrough for an SDCStudio team. Setting up keys and the wallet, a session with a coding agent,
+  the tree format and the CLI end to end, costs in credits, reviewing drafts before publishing, and what each
+  refusal means.
+
 ## [4.4.1] - 2026-11-02
 
 ### Fixed

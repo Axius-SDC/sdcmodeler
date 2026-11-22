@@ -63,6 +63,7 @@ sdcmodeler job <job_ct_id>
 sdcmodeler package <ct_id> --dir ./packages
 sdcmodeler app <ct_id> --profile lightweight --dir ./apps
 sdcmodeler kit <ct_id> --project ./my-app
+sdcmodeler ship tree.json --title "Vitals" --deliver package,kit --project ./my-app
 sdcmodeler wallet
 ```
 
@@ -82,19 +83,106 @@ A JSON-RPC 2.0 stdio server, no SDK, the way sdcvalidator and sdcgovernance are 
 |---|---|---|
 | `search_components` | the public catalog by label, type and project | no |
 | `list_models`, `get_model` | published models and their artifact routes | no |
-| `estimate_model` | what a tree would reuse, mint and cost; returns `estimate_id` | no |
+| `estimate_model` | what a tree would reuse, mint and cost; returns `estimate_id`; with `deliver`, the whole run's total and whether the wallet and the key can pay it | no |
 | `build_model` | assemble, publish and generate (or `publish: false` for a draft); needs the `estimate_id` the person saw; refuses past the key's limit | yes |
 | `job_status` | one job by id: status, step, cost so far, the model's links | no |
 | `download_package` | a model's package ZIP with the key, including a model in a private project; builds a missing package first (free, once) unless `generate` is false | no |
 | `generate_app` | generate and download the application; needs `confirm_charge`; 1,500 credits the first time, free after | yes |
 | `add_supabase_kit` | write a model's Supabase kit into a project (`project_dir`); needs `confirm_charge`; charged with the application, once per model | yes |
+| `build_and_deliver` | one run: build, publish, wait, then deliver the package, application or kit; needs the `estimate_id` returned with the same `deliver`; refuses before building when the total cannot be paid | yes |
 | `wallet` | balance in credits and the key's policy | no |
 
-**The policy lives in the server.** No spend without an estimate shown: `build_model` takes the `estimate_id` that `estimate_model` returned for the same title and tree in this process. Stop at the key's limit: a build whose estimate exceeds what the key may still spend is refused before the server is asked. Never pay: a 402 is reported with the wallet page's address and the tool stops. No tool takes a URL, a key or a payment method as an argument; the key is the environment the server starts with.
+**The policy lives in the server.** No spend without an estimate shown: `build_model` takes the `estimate_id` that `estimate_model` returned for the same title and tree in this process. Stop at the key's limit: a build whose estimate exceeds what the key may still spend is refused before the server is asked. Never pay: a 402 is reported with the wallet page's address and the tool stops. One approval per run: `build_and_deliver` follows the run's total the person saw, which covers the application or kit charge, so it needs no `confirm_charge`. No tool takes a URL, a key or a payment method as an argument; the key is the environment the server starts with.
 
 ## The package or the application
 
 `get_model` names the artifacts: the XSD 1.1 schema, the instance template, JSON, JSON-LD, SHACL, HTML, GraphQL. The package is a contract with no runtime attached; a feature inside an existing application implements on it, in any language, validating every record locally with [sdcvalidator](https://pypi.org/project/sdcvalidator/). The generated application (lightweight or enterprise profile) is a Django implementation on the same package, right when the feature is a new service. The Supabase kit is the same for a TypeScript app on Supabase: typed code for the model's records, migrations, and a gate (an Edge Function) that validates every record against the published model before storing it. `sdcmodeler kit` and `add_supabase_kit` write it into the project: the first model brings the project base, each further one adds its kit and one migration, numbered after the project's latest, and a component already in the project is never rewritten. Apply with Supabase's CLI (`supabase db push`, `supabase functions deploy gate`). [CordovaOS](https://github.com/Axius-SDC/CordovaOS) is ten of them sharing data with zero integration code.
+
+## Walkthrough for an SDCStudio team
+
+### Set up once
+
+The account holder does this in SDCStudio at [sdcstudio.axius-sdc.com](https://sdcstudio.axius-sdc.com); each developer then installs the package and exports their key.
+
+1. Fund the wallet. Building is paid in credits, 1,000 to the dollar. sdcmodeler never adds funds; a person does that at the wallet page.
+2. Create one API key per developer or agent in Settings, API Keys. Without the `spend` scope a key can search, estimate, read models and download packages. With it, the key's spending limit caps what that holder may spend.
+3. Check a key at any time with `sdcmodeler wallet`: the balance and that key's policy.
+
+### With a coding agent
+
+Add the MCP configuration above to the agent. A typical session, for a developer adding a vitals form to a clinic app:
+
+1. The developer asks: "Add a form to record blood pressure and pulse."
+2. The agent calls `search_components` and finds a published blood pressure component.
+3. It drafts a tree that reuses that component and mints a new Pulse count, then calls `estimate_model`.
+4. It shows the developer the estimate: one component reused, one minted, the total in credits.
+5. The developer approves. The agent calls `build_model` with that `estimate_id`, follows `job_status` if a job runs, then calls `download_package` or `add_supabase_kit`.
+6. The agent writes the feature against the published model.
+
+The agent cannot skip step 4: `build_model` refuses without the `estimate_id` returned for the same title and tree in the same session.
+
+### With the CLI
+
+The one piece written by hand is the tree. A component with a `ct_id` is reused; one with a `label` and an SDC4 `data_type` (such as `XdString`, `XdCount`, `XdQuantity` or `XdTemporal`) is minted. Clusters group components and nest.
+
+```json
+{
+  "label": "Vitals",
+  "components": [
+    {"ct_id": "<ct_id from search>"},
+    {"label": "Pulse", "data_type": "XdCount"}
+  ],
+  "clusters": []
+}
+```
+
+```bash
+sdcmodeler search "blood pressure" --type xdquantity
+sdcmodeler estimate tree.json --title "Vitals"
+sdcmodeler build tree.json --title "Vitals" --estimate-id <id> --wait
+sdcmodeler package <ct_id> --dir ./packages
+```
+
+Builds land in the Modeler's default project, created on first use if there is none.
+
+### In one run
+
+`ship` (CLI) and `build_and_deliver` (MCP) do the whole path after one approval: build, publish every new component and the model into the Modeler's private default project, wait for the job, then deliver.
+
+```bash
+sdcmodeler ship tree.json --title "Vitals" --deliver package,kit --project ./my-app --plan   # the total; nothing spent
+sdcmodeler ship tree.json --title "Vitals" --deliver package,kit --project ./my-app          # asks once, then runs
+```
+
+The total covers the build and the deliverables: 1,500 credits once when they include an application or a kit, since one charge covers both. A run the wallet or the key cannot pay is refused before anything is built. Once the model is published, a deliverable that fails is reported under `failed`, the others still run, and `ship` exits 2; fetch the failed one with its own command. `--yes` approves without the prompt, for scripts.
+
+The deliverables can live in the agent's settings instead of each call: `SDCMODELER_DELIVER` (for example `package,kit`), `SDCMODELER_OUTPUT_DIR` for the package and application, and `SDCMODELER_PROJECT_DIR` for the kit, in the environment of the CLI or of the MCP server's configuration.
+
+### What it costs
+
+Reuse is free, so the cheapest model is the one built most from published components. The Vitals tree costs 600 credits ($0.60): 500 to assemble, 100 to mint Pulse.
+
+| Action | Credits | USD |
+|---|---|---|
+| Search, estimate, read models, download a package | 0 | $0.00 |
+| Reuse a published component | 0 | $0.00 |
+| Mint a component, or a new cluster below the root | 100 each | $0.10 |
+| Assemble a model (covers its root cluster) | 500 | $0.50 |
+| Generate an application or Supabase kit, first time per user per model | 1,500 | $1.50 |
+
+### Review before publishing
+
+Publishing locks a model permanently; that is what lets every Governed Data Record keep validating against the schema it was made for. A team with a data steward builds drafts (`--draft`, `publish: false` in `build_model`, or `publish=False` in the client), the steward reviews and publishes in SDCStudio, and the developer then takes the package, application or kit as usual.
+
+### When a call is refused
+
+| You see | It means | Do this |
+|---|---|---|
+| 402, `InsufficientCredits` | The wallet cannot cover the build; cost and balance are reported in credits | Add funds at the wallet page, then build again |
+| 403, `KeyPolicyRefused` | The key lacks a scope the call needs, or is past its spending limit | Ask the account holder to adjust the key |
+| 409, stale estimate (`AssemblyRefused`) | The tree changed after the estimate | Estimate again and build with the new id |
+| 409, retired component (`AssemblyRefused`) | The tree reuses a retired component | Search for its replacement and update the tree |
+| Problems in the estimate | A component needs a `ct_id`, or a `label` and `data_type`; a cluster needs a label | Fix the tree; nothing was built |
 
 ## What is not here
 
