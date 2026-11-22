@@ -67,6 +67,21 @@ class AssemblyRefused(SDCStudioError):
     """409 on assembly: a retired component in the tree; the message names it."""
 
 
+class TranslationRefused(SDCStudioError):
+    """
+    400 with ``error_type`` ``language`` (not a valid BCP 47 tag; SDCStudio 4.28.1), or 409 on translation
+    (SDCStudio 4.28.0): ``error_type`` ``stale_estimate`` (the source, language, project or
+    publish changed since the estimate), ``retired`` (with the ``successor`` to translate instead, or None) or
+    ``same_language`` (the source is already in that language). Nothing was created or charged.
+    """
+
+    def __init__(self, status: int, body: Any):
+        b = body if isinstance(body, dict) else {}
+        self.error_type = b.get("error_type", "")
+        self.successor = b.get("successor")
+        super().__init__(status, body, b.get("error") or "Translation refused.")
+
+
 def _short(body: Any, n: int = 200) -> str:
     text = body if isinstance(body, str) else json.dumps(body, default=str)
     return text[:n]
@@ -217,7 +232,7 @@ class SDCStudioClient:
     # ------------------------------------------------------------------ building
 
     def estimate(self, tree: dict[str, Any], title: str = "", *, allow_retired: bool = False,
-                 deliver: list[str] | None = None) -> dict[str, Any]:
+                 deliver: list[str] | None = None, publish: bool = True) -> dict[str, Any]:
         """
         What the assembly would reuse, mint and cost.
 
@@ -232,8 +247,11 @@ class SDCStudioClient:
         deliverables too and joins the ``estimate_id``. A deployment with the build-and-deliver release
         answers ``deliver_credits``, ``build_credits``, ``will_publish``, ``funding`` and ``auto_spend``;
         an older one ignores ``deliver`` and answers the build alone, without those fields.
+
+        ``publish`` False prices a draft build: no publication charges (SDCStudio 4.28.0). It is sent only
+        when False and never changes the ``estimate_id``.
         """
-        local = pricing.estimate_tree(tree, title, deliver)
+        local = pricing.estimate_tree(tree, title, deliver, publish)
         if not self.api_key:
             local["source"] = "local"
             return local
@@ -242,6 +260,8 @@ class SDCStudioClient:
             payload["allow_retired"] = True
         if deliver:
             payload["deliver"] = list(deliver)
+        if not publish:
+            payload["publish"] = False
         resp = self._http.post("/api/v1/dmgen/assemble/estimate/", json=payload)
         if resp.status_code == 404:
             local["source"] = "local"
@@ -305,6 +325,62 @@ class SDCStudioClient:
         data = dict(data) if isinstance(data, dict) else {"result": data}
         data["mode"] = "mixed" if resp.status_code == 202 else "reuse"
         return data
+
+    # ------------------------------------------------------------------ translating (SDCStudio 4.28.0)
+
+    @staticmethod
+    def _translate_payload(source: str, language: str, project: str | None, publish: bool) -> dict[str, Any]:
+        # publish goes out explicitly, true or false: publication is permanent and charged, so the
+        # server's default is never relied on. Estimate and translation send the same body, so the id matches.
+        payload: dict[str, Any] = {"source": source, "language": language, "publish": bool(publish)}
+        if project:
+            payload["project"] = project
+        return payload
+
+    def _translate_post(self, path: str, payload: dict[str, Any]) -> Any:
+        resp = self._http.post(path, json=payload)
+        if resp.status_code == 404 and not isinstance(_body(resp), dict):
+            raise SDCStudioError(404, _body(resp), "This deployment does not translate (needs SDCStudio 4.28.0).")
+        body = _body(resp)
+        if resp.status_code == 409 or (resp.status_code == 400 and isinstance(body, dict)
+                                        and body.get("error_type") == "language"):
+            raise TranslationRefused(resp.status_code, body)
+        self._raise(resp)
+        return _body(resp)
+
+    def translate_estimate(self, source: str, language: str, *, project: str | None = None,
+                           publish: bool = True) -> dict[str, Any]:
+        """
+        What translating a published model or component into ``language`` would reuse, copy and cost. Spends nothing.
+
+        ``POST /api/v1/dmgen/translate/estimate/``: ``estimate_id`` (binding source, language, project and
+        publish), ``source`` ({ct_id, kind: model|component, type, label, lang}), ``project``, ``reuse``
+        (existing translations, free, each marked ``published``), ``copy``, ``unanchored`` (enumeration values
+        without a definition IRI), ``model_credits``, ``draft_credits``, ``publish_credits``, ``total_credits``,
+        ``funding``, ``auto_spend``, ``within_key_limit`` and ``problems``. ``project`` defaults, on the server,
+        to the caller's default project. Needs a key; there is no local estimate.
+        """
+        if not self.api_key:
+            raise ValueError("Translating needs an API key (SDCSTUDIO_API_KEY).")
+        return self._translate_post("/api/v1/dmgen/translate/estimate/",
+                                    self._translate_payload(source, language, project, publish))
+
+    def translate_languages(self, q: str = "") -> Any:
+        """Language tags from the IANA registry matching ``q`` by name or tag (SDCStudio 4.28.1). Free."""
+        return self._get("/api/v1/dmgen/translate/languages/", q=q)
+
+    def translate(self, source: str, language: str, *, project: str | None = None, publish: bool = True,
+                  estimate_id: str | None = None) -> dict[str, Any]:
+        """
+        Translate a published model or component (``POST /api/v1/dmgen/translate/``). The server funds and holds
+        the whole run first (a 402 is ``InsufficientCredits`` with its ``reason``) and answers 202 with
+        ``job_ct_id``; poll it with ``job_status`` or ``wait_for_job``. ``publish=False`` makes drafts only, for
+        review. A 409 is ``TranslationRefused``. Pass the ``estimate_id`` the person saw, with the same arguments.
+        """
+        payload = self._translate_payload(source, language, project, publish)
+        if estimate_id:
+            payload["estimate_id"] = estimate_id
+        return self._translate_post("/api/v1/dmgen/translate/", payload)
 
     def job_status(self, job_ct_id: str) -> dict[str, Any]:
         """

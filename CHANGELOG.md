@@ -6,6 +6,33 @@ of the SDC4 reference model.
 
 ## [Unreleased]
 
+## [4.6.0] - 2026-11-22
+
+### Added
+
+- **Translate a published model or component** (SDCStudio 4.28.0; phase 3 of SDCStudio's translate PRD).
+  `estimate_translation` and `translate_model` (MCP), `sdcmodeler translate <ct_id> --language pt-BR [--project P]
+  [--review] [--plan] [--yes]` (CLI), `translate_estimate()` and `translate()` on the client, and
+  `sdcmodeler.translate` with the logic for both. Under the build-and-deliver policy: `translate_model` takes the
+  `estimate_id` the person saw, or runs on an auto-spend key; `estimate_translation` never spends. `publish` is
+  always sent explicitly; `--review` (`review: true`) makes drafts only. The estimate lists what is reused, what
+  is copied and the unanchored enumeration values. A model's data tree, title and description are translated; its
+  contextual components and Units stay in their original language. The language is any BCP 47 tag (SDCStudio
+  4.28.1; 4.28.0 takes SDCStudio's own codes); an invalid one is a `TranslationRefused` (`language`), and
+  `translate_languages(q)` searches the registry. A run ends `completed`, `drafts_unpublished` (publishing
+  failed; translate again to finish; `translate` exits 2) or `in_flight` (exits 3). A 409 is
+  `TranslationRefused`, with the `successor` of a retired source. No local fallback.
+
+### Changed
+
+- **Prices from 2026-11-24** (SDCStudio 4.28.0): every new draft is 100 credits, however it is made, and publishing a
+  component 100 more; a model stays 500, its publication included. The local estimate adds `publish_credits`
+  (new clusters and components, 100 each) beside `mint_credits`, as the server's does: a mixed run is 500 plus 200
+  per new item. Tool descriptions and the README say so.
+- **A draft build is priced as one.** `estimate()` takes `publish` (the client, `estimate_model` and
+  `sdcmodeler estimate --draft`), sent only when false; `build_model` with `publish: false` checks the key's limit
+  against the draft total. A draft build pays no publication charges; the `estimate_id` is the same either way.
+
 ## [4.5.0] - 2026-11-22
 
 ### Added

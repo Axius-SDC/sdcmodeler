@@ -20,6 +20,9 @@ the client deliberately does not (SDCStudio's agent-path PRD, 3.2):
   or the key cannot pay that total (``sdcmodeler.deliver``). A key the person
   created with auto-spend in SDCStudio (read from the server, never from an
   argument) runs it without a prior estimate, within the person's settings.
+- **The same for a translation.** ``estimate_translation`` never spends, even
+  with auto-spend; ``translate_model`` takes the ``estimate_id`` it returned
+  for the same source, language, project and review, or runs on an auto-spend key.
 
 Configuration is the environment the server starts with: ``SDCSTUDIO_API_KEY``
 (the key from Settings, API Keys) and ``SDCSTUDIO_URL`` (the deployment; the
@@ -40,8 +43,10 @@ from sdcmodeler.client import (
     KeyPolicyRefused,
     SDCStudioClient,
     SDCStudioError,
+    TranslationRefused,
 )
 from sdcmodeler import deliver as runs
+from sdcmodeler import translate as translations
 from sdcmodeler.kits import KitConflictError, write_kit
 from sdcmodeler.pricing import DOWNLOAD_APP_CREDITS
 
@@ -56,6 +61,8 @@ _client: SDCStudioClient | None = None
 _estimates: dict[str, dict[str, Any]] = {}
 #: (estimate_id, deliverables) -> the run's plan, for this process: build_and_deliver follows the total the person saw.
 _plans: dict[tuple[str, tuple[str, ...]], dict[str, Any]] = {}
+#: estimate_id -> the translation's plan, for this process: translate_model follows the total the person saw.
+_translations: dict[str, dict[str, Any]] = {}
 _output_dir: Path = Path(os.environ.get("SDCMODELER_OUTPUT_DIR", ".")).resolve()
 
 
@@ -67,6 +74,7 @@ def configure(client: SDCStudioClient | None = None, output_dir: str | Path | No
         _output_dir = Path(output_dir).resolve()
     _estimates.clear()
     _plans.clear()
+    _translations.clear()
     return _client
 
 
@@ -83,7 +91,7 @@ TOOLS: list[dict[str, Any]] = [
             "components come first, private ones included (each result says scope: mine), then the "
             "public catalog (scope: public); without a key, the public catalog only. Reuse your own, "
             "then the public catalog, and mint last: a published component that fits is free to "
-            "assemble; minting a new one costs 100 credits. Returns ct_id, label, description, "
+            "assemble; a new one costs 200 credits (100 for the draft, 100 to publish it). Returns ct_id, label, description, "
             "component_type, project_name and reuse_ref for each result. Free."
         ),
         "inputSchema": {
@@ -124,8 +132,8 @@ TOOLS: list[dict[str, Any]] = [
             "What assembling this model would reuse, mint and cost, in credits, computed before any "
             "money moves. Takes the title and the assembly tree ({label, components: [{ct_id} to reuse "
             "or {label, data_type} to mint], clusters: [...]}). Returns estimate_id, the reused and "
-            "minted leaves, problems in the tree, and total_credits (500 for the model plus 100 per "
-            "mint). Show the result to the person; build_model needs the estimate_id. With deliver "
+            "minted leaves, problems in the tree, and total_credits (500 for the model, plus 200 for each "
+            "new component or cluster: 100 for its draft, 100 to publish it). Show the result to the person; build_model needs the estimate_id. With deliver "
             "(package, app:lightweight, app:enterprise, kit), it prices the whole run for "
             "build_and_deliver: the build plus 1,500 credits once for an application or kit, and under "
             "run the total, what the run will publish (permanently), how it is funded (the balance, or a "
@@ -137,6 +145,8 @@ TOOLS: list[dict[str, Any]] = [
             "properties": {
                 "title": {"type": "string"},
                 "tree": {"type": "object", "description": "The assembly tree."},
+                "publish": {"type": "boolean", "default": True,
+                            "description": "False prices a draft build (build_model with publish false): no publication charges. Same estimate_id."},
                 "deliver": {
                     "type": "array", "items": {"type": "string", "enum": list(runs.DELIVERABLES) + ["app"]},
                     "description": "Optional: what build_and_deliver will deliver; prices the whole run.",
@@ -151,7 +161,7 @@ TOOLS: list[dict[str, Any]] = [
             "Assemble and publish the model the person estimated and approved. Needs the estimate_id "
             "from estimate_model for the same title and tree; refuses otherwise, the server refuses a stale "
             "one too, and refuses when the estimate exceeds what the key may still spend. Spends credits: "
-            "500 for the model plus 100 per minted component or new cluster. With every leaf existing the "
+            "500 for the model plus 200 per new component or cluster (100 with publish false). With every leaf existing the "
             "model is published and its package generated at once (result has ct_id and artifacts); with "
             "new leaves the pipeline runs and the result has a job_ct_id to poll with job_status; when the "
             "job completes it has published and generated as asked and carries the model's links. publish "
@@ -204,9 +214,61 @@ TOOLS: list[dict[str, Any]] = [
         },
     },
     {
+        "name": "estimate_translation",
+        "description": (
+            "What translating a published model or component into another language would cost, before any money "
+            "moves; never spends, even with an auto-spend key. SDCStudio copies every component the source needs "
+            "into the target language, each keeping its link to its original, its semantic links and its "
+            "enumeration definition IRIs, and translates the human text (labels, descriptions, enumeration values, "
+            "boolean values, ordinal symbols, the model's title and description, across its data tree); the "
+            "contextual components (audit, attestation, access control, protocol, workflow, parties) and Units stay "
+            "in their original language, and links and constraints never change. The language is any BCP 47 language tag, such as es-ES, sw or zh-Hant-TW. Returns estimate_id, what is reused (existing translations: a published one is free; your own "
+            "draft in the target project is published in the run, charged for publication only), what is copied (100 "
+            "credits per draft, and 100 per component to publish it; the model's 500 covers its own), unanchored "
+            "enumeration values (no definition IRI, so nothing ties the translated value to its original: show "
+            "these to the person), the total, how it is funded, and refusals. Show the person the summary; "
+            "translate_model needs the estimate_id. Free."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "source": {"type": "string", "description": "ct_id of the published model or component."},
+                "language": {"type": "string", "description": "Any BCP 47 language tag, such as es-ES, sw or zh-Hant-TW."},
+                "project": {"type": "string", "description": "Optional target project ct_id; default: the Modeler's default project."},
+                "review": {"type": "boolean", "default": False,
+                           "description": "Drafts only, for a person to review in SDCStudio; nothing is published or charged for publication."},
+            },
+            "required": ["source", "language"],
+        },
+    },
+    {
+        "name": "translate_model",
+        "description": (
+            "Translate a published model or component into another language and publish it (review true: drafts "
+            "only). Needs the estimate_id from estimate_translation with the same source, language, project and "
+            "review, after the person has seen the total; when the person created the key with auto-spend in "
+            "SDCStudio, no estimate_id is needed and the result carries the estimate. Waits for the job. Returns "
+            "status completed (translated_ct_id, created, reused, unanchored, and a model's links), "
+            "drafts_unpublished (made and charged, publishing failed: translate again to finish, charged for "
+            "publication only), or in_flight (still running: poll job_status, never translate again). A 402 names "
+            "the reason; report it and stop."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "estimate_id": {"type": "string", "description": "From estimate_translation; not needed with an auto-spend key."},
+                "source": {"type": "string"},
+                "language": {"type": "string"},
+                "project": {"type": "string"},
+                "review": {"type": "boolean", "default": False},
+            },
+            "required": ["source", "language"],
+        },
+    },
+    {
         "name": "job_status",
         "description": (
-            "One job (job_ct_id from build_model): status queued, running, completed or failed; step; "
+            "One job (job_ct_id from build_model, build_and_deliver or translate_model): status queued, running, completed or failed; step; "
             "cost_credits so far; on completion the model's links (dm_ct_id, catalog_url, package_url); "
             "on failure the reason. Poll every few seconds, backing off. Free."
         ),
@@ -332,7 +394,10 @@ def _handle_estimate_model(args: dict) -> Any:
         estimate = dict(plan["estimate"])
         estimate["run"] = {k: v for k, v in plan.items() if k != "estimate"}
         return estimate
-    estimate = get_client().estimate(tree, title)
+    publish = args.get("publish", True)
+    if not isinstance(publish, bool):
+        raise ValueError("`publish` must be a boolean.")
+    estimate = get_client().estimate(tree, title, publish=publish)
     _estimates[estimate["estimate_id"]] = estimate
     key = estimate.get("key") if estimate.get("source") == "server" else None
     if key and key.get("remaining_credits") is not None:
@@ -424,7 +489,8 @@ def _handle_build_model(args: dict) -> Any:
     estimate_id = _string(args, "estimate_id", required=True)
     title = _string(args, "title", required=True)
     tree = _object(args, "tree", required=True)
-    current = get_client().estimate(tree, title)
+    publish = bool(args.get("publish", True))
+    current = get_client().estimate(tree, title, publish=publish)
     shown = _estimates.get(estimate_id)
     if shown is None or current["estimate_id"] != estimate_id:
         raise ValueError(
@@ -445,7 +511,6 @@ def _handle_build_model(args: dict) -> Any:
             f"This key may still spend {remaining} credits and the build needs {current['total_credits']}. "
             "Ask the person for a key with a higher limit, or to run the build themselves."
         )
-    publish = bool(args.get("publish", True))
     generate = bool(args.get("generate", True)) and publish
     result = get_client().assemble(title, tree, description=_string(args, "description"),
                                    contextual=_object(args, "contextual"), estimate_id=estimate_id,
@@ -457,6 +522,60 @@ def _handle_build_model(args: dict) -> Any:
             f"Poll job_status with job_ct_id {result.get('job_ct_id')} until completed; its result then says "
             "published and generated and carries the model's links."
         )
+    return result
+
+
+def _translation_args(args: dict) -> dict[str, Any]:
+    review = args.get("review", False)
+    if not isinstance(review, bool):
+        raise ValueError("`review` must be a boolean.")
+    return {"source": _string(args, "source", required=True).strip(),
+            "language": _string(args, "language", required=True).strip(),
+            "project": _string(args, "project").strip() or None,
+            "publish": not review}
+
+
+def _shown(the_plan: dict) -> dict:
+    out = {k: v for k, v in the_plan.items() if k not in ("estimate", "request")}
+    out["summary"] = translations.summary(the_plan)
+    return out
+
+
+def _handle_estimate_translation(args: dict) -> Any:
+    a = _translation_args(args)
+    the_plan = translations.plan(get_client(), a["source"], a["language"], project=a["project"], publish=a["publish"])
+    if the_plan["estimate_id"]:
+        _translations[the_plan["estimate_id"]] = the_plan
+    out = _shown(the_plan)
+    out["next"] = ("Show the person the summary, then translate_model with this estimate_id."
+                   if not the_plan["refusals"] else "It cannot run as it stands; tell the person the refusals.")
+    return out
+
+
+def _handle_translate_model(args: dict) -> Any:
+    a = _translation_args(args)
+    estimate_id = _string(args, "estimate_id")
+    current = translations.plan(get_client(), a["source"], a["language"], project=a["project"], publish=a["publish"])
+    shown = _translations.get(estimate_id) if estimate_id else None
+    if current["auto_spend"] and shown is None:
+        if estimate_id and estimate_id != current["estimate_id"]:
+            raise ValueError("The estimate_id does not match this source, language, project and review; run estimate_translation again.")
+        result = translations.run(get_client(), current)
+        result["authorized_by"] = "auto_spend"
+    else:
+        if shown is None:
+            raise ValueError(
+                "translate_model needs the estimate_id that estimate_translation returned for this source, language, "
+                "project and review in this session; run estimate_translation, show the person the summary, then translate."
+            )
+        if current["estimate_id"] != estimate_id:
+            raise ValueError("The source, language, project or review changed since the estimate; run estimate_translation again.")
+        if current["total_credits"] != shown["total_credits"]:
+            raise ValueError(f"The translation now costs {current['total_credits']} credits, not the {shown['total_credits']} "
+                             "the person saw; show them the new estimate.")
+        result = translations.run(get_client(), current)
+        result["authorized_by"] = "estimate_shown"
+    result["plan"] = _shown(result["plan"])
     return result
 
 
@@ -526,6 +645,8 @@ TOOL_HANDLERS = {
     "estimate_model": _handle_estimate_model,
     "build_model": _handle_build_model,
     "build_and_deliver": _handle_build_and_deliver,
+    "estimate_translation": _handle_estimate_translation,
+    "translate_model": _handle_translate_model,
     "job_status": _handle_job_status,
     "download_package": _handle_download_package,
     "generate_app": _handle_generate_app,
@@ -581,7 +702,8 @@ def _handle_request(request: Any) -> dict | None:
                 "made with auto-spend may run it without the estimate; the result carries it); prefer the model package over the generated application when the "
                 "feature lives inside an existing application; fetch a model's package, including one you just built "
                 "in a private project, with download_package; for a TypeScript app on Supabase, write the model's kit "
-                "into the project with add_supabase_kit. A 402 means the person acts at "
+                "into the project with add_supabase_kit; to translate a published model or component into another "
+                "language, estimate_translation, show its summary (the unanchored values above all), then translate_model. A 402 means the person acts at "
                 f"{get_client().base_url}/app/settings?tab=wallet (fund it, or fix what its reason names); never try to pay. "
                 + ("A key is configured, so building and downloading are available within its policy."
                    if has_key else "No key is configured: the catalog and estimates work; building needs SDCSTUDIO_API_KEY.")
@@ -612,6 +734,9 @@ def _handle_request(request: Any) -> dict | None:
                 f"Insufficient credits: this needs {exc.estimated_cost_credits} credits and the wallet has "
                 f"{exc.balance_credits}. The person funds the wallet at {get_client().base_url}/app/settings?tab=wallet; stop here."
             ))
+        except TranslationRefused as exc:
+            successor = f" Its successor is {exc.successor}; translate that instead." if exc.successor else ""
+            return _tool_error(req_id, f"Translation refused ({exc.error_type}): {exc}.{successor} Nothing was created or charged.")
         except KeyPolicyRefused as exc:
             return _tool_error(req_id, f"The API key refused this ({exc.error_type}): {exc}")
         except (AssemblyRefused, SDCStudioError, KitConflictError, ValueError) as exc:

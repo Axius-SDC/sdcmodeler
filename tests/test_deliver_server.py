@@ -74,7 +74,7 @@ def test_the_estimate_id_binds_deliver_only_when_there_is_one():
     canonical = json.dumps({"title": "Vitals", "tree": MIXED_TREE, "deliver": ["package", "kit"]}, sort_keys=True, separators=(",", ":"))
     with_deliver = estimate_tree(MIXED_TREE, "Vitals", ["package", "kit"])
     assert with_deliver["estimate_id"] == hashlib.sha256(canonical.encode()).hexdigest()[:12] != plain["estimate_id"]
-    assert (with_deliver["build_credits"], with_deliver["deliver_credits"], with_deliver["total_credits"]) == (600, 1500, 2100)
+    assert (with_deliver["build_credits"], with_deliver["deliver_credits"], with_deliver["total_credits"]) == (700, 1500, 2200)
 
 
 def test_the_client_sends_deliver_and_scope_only_when_given(fake):
@@ -107,7 +107,7 @@ def test_a_402_carries_the_reason_and_the_wallet_page(fake):
 
 def test_a_short_balance_a_reload_covers_is_not_refused(fake):
     p = runs.plan(new_server(fake, balance=500, would_cover=True).client(), MIXED_TREE, "Vitals", "package,kit")
-    assert p["mode"] == "server" and p["refusals"] == [] and p["total_credits"] == 2100
+    assert p["mode"] == "server" and p["refusals"] == [] and p["total_credits"] == 2200
     assert p["will_publish"]["project"]["public"] is False
 
 

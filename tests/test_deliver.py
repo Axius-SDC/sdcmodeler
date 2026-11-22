@@ -56,19 +56,19 @@ def test_parse_deliver_reads_the_environment_and_orders_the_items(monkeypatch):
 
 def test_plan_adds_one_application_charge_for_an_app_and_a_kit(fake):
     c = scripted(fake).client()
-    assert runs.plan(c, MIXED_TREE, "Vitals", "package")["total_credits"] == 600
+    assert runs.plan(c, MIXED_TREE, "Vitals", "package")["total_credits"] == 700
     p = runs.plan(c, MIXED_TREE, "Vitals", ["package", "app", "kit"])
-    assert (p["build_credits"], p["deliver_credits"], p["total_credits"]) == (600, 1500, 2100)
+    assert (p["build_credits"], p["deliver_credits"], p["total_credits"]) == (700, 1500, 2200)
     assert p["refusals"] == [] and p["deliver"] == ["package", "app:lightweight", "kit"]
     assert not assembled(fake), "a plan spends nothing"
 
 
 def test_plan_refuses_a_run_the_wallet_or_the_key_cannot_pay(fake):
     p = runs.plan(scripted(fake, balance=2000).client(), MIXED_TREE, "Vitals", "kit")
-    assert len(p["refusals"]) == 1 and p["refusals"][0].startswith("The run needs 2100 credits and the wallet has 2000.")
+    assert len(p["refusals"]) == 1 and p["refusals"][0].startswith("The run needs 2200 credits and the wallet has 2000.")
     assert "/app/settings?tab=wallet (fund the wallet)" in p["refusals"][0]
     p = runs.plan(scripted(fake, remaining=1000).client(), MIXED_TREE, "Vitals", "kit")
-    assert p["refusals"] == ["The run needs 2100 credits and this key may still spend 1000."]
+    assert p["refusals"] == ["The run needs 2200 credits and this key may still spend 1000."]
 
 
 # ------------------------------------------------------------------ the run
@@ -184,7 +184,7 @@ def test_ship_plan_prints_the_total_and_spends_nothing(cli_client, tmp_path, cap
     tree = tmp_path / "tree.json"; tree.write_text(json.dumps(MIXED_TREE))
     assert main(["ship", str(tree), "--title", "Vitals", "--deliver", "package,kit", "--plan"]) == 0
     out = json.loads(capsys.readouterr().out)
-    assert out["total_credits"] == 2100 and "estimate" not in out
+    assert out["total_credits"] == 2200 and "estimate" not in out
     assert not assembled(cli_client)
 
 

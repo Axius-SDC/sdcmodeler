@@ -2,13 +2,15 @@
 What a model costs, computed locally before any call that spends.
 
 SDCStudio's prices (Terms of Service, section 6; ``docs/user-guides/wallet-billing.md``):
-1,000 credits per dollar; minting a component 100 credits; assembling a model
-500; downloading an application 1,500, once per user per model since 4.16.0;
-settling a record 1,000. The estimate below resolves an assembly tree the way
-the server does (SDCStudio 4.17.5, one rule on every path): 500 for the model,
-which covers its root cluster; 100 for every other new cluster; 100 for every
-new component; anything with a ``ct_id`` is reused and free. With a key the
-server's estimate endpoint is used; this is the fallback without one.
+1,000 credits per dollar. Since 2026-11-24 every new draft costs 100 credits,
+however it is made (minted, copied or translated), and publishing a component
+costs 100 more; a model costs 500, covering its draft, its root cluster and its
+publication. Downloading an application or a kit costs 1,500, once per user per
+model; settling a record 1,000. The estimate below resolves an assembly tree the
+way the server does: 500 for the model; 200 (draft and publication) for every
+other new cluster and every new component; anything with a ``ct_id`` is reused
+and free. With a key the server's estimate endpoint is used; this is the
+fallback without one, and it assumes the run publishes.
 """
 from __future__ import annotations
 
@@ -17,7 +19,12 @@ import json
 from typing import Any
 
 CREDITS_PER_USD = 1000
-MINT_COMPONENT_CREDITS = 100
+#: A new draft, however it is made (minted, copied or translated).
+DRAFT_CREDITS = 100
+#: Publishing a component (a model's publication is in its 500).
+PUBLISH_COMPONENT_CREDITS = 100
+#: A new component or cluster in an assembly that publishes: its draft and its publication.
+MINT_COMPONENT_CREDITS = DRAFT_CREDITS + PUBLISH_COMPONENT_CREDITS
 ASSEMBLE_MODEL_CREDITS = 500
 DOWNLOAD_APP_CREDITS = 1500
 SETTLE_CREDITS = 1000
@@ -46,12 +53,13 @@ def _walk(node: dict[str, Any], path: str, reuse: list, mint: list, problems: li
         _walk(cluster, f"{path}/{name}", reuse, mint, problems)
 
 
-def estimate_tree(tree: dict[str, Any], title: str = "", deliver: list[str] | None = None) -> dict[str, Any]:
+def estimate_tree(tree: dict[str, Any], title: str = "", deliver: list[str] | None = None,
+                  publish: bool = True) -> dict[str, Any]:
     """
     Resolve an assembly tree into what is reused, what would be minted, and the cost in credits.
 
     Returns ``{"estimate_id", "reuse", "mint", "problems", "model_credits",
-    "mint_credits", "total_credits", "mode"}``. ``estimate_id`` is the first
+    "mint_credits", "publish_credits", "total_credits", "mode"}``. ``estimate_id`` is the first
     twelve hex characters of the SHA-256 of the canonical tree and title; the
     MCP server's ``build_model`` requires it, so a build always follows the
     estimate the person saw.
@@ -61,18 +69,24 @@ def estimate_tree(tree: dict[str, Any], title: str = "", deliver: list[str] | No
     ``estimate_id_for`` does since the build-and-deliver release, and adds
     ``deliver``, ``deliver_credits`` and ``build_credits``, with
     ``total_credits`` covering both.
+
+    ``publish`` False (a draft build) leaves out the publication charges; it never joins the id, as on
+    the server (SDCStudio 4.28.0).
     """
     reuse: list = []
     mint: list = []
     problems: list = []
     _walk(tree, tree.get("label", "root"), reuse, mint, problems)
-    mint_credits = MINT_COMPONENT_CREDITS * len(mint)
+    # As the server's estimate since SDCStudio 4.28.0: mint_credits counts the drafts, publish_credits
+    # their publication; the model's 500 covers its own.
+    mint_credits = DRAFT_CREDITS * len(mint)
+    publish_credits = PUBLISH_COMPONENT_CREDITS * len(mint) if publish else 0
     title = (title or "").strip()   # the server hashes the title as its serializer trims it
     body: dict[str, Any] = {"title": title, "tree": tree}
     if deliver:
         body["deliver"] = list(deliver)
     canonical = json.dumps(body, sort_keys=True, separators=(",", ":"), default=str)
-    build_credits = ASSEMBLE_MODEL_CREDITS + mint_credits
+    build_credits = ASSEMBLE_MODEL_CREDITS + mint_credits + publish_credits
     deliver_credits = DOWNLOAD_APP_CREDITS if any(d in CHARGED_DELIVERABLES for d in deliver or []) else 0
     out = {
         "estimate_id": hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:12],
@@ -82,6 +96,7 @@ def estimate_tree(tree: dict[str, Any], title: str = "", deliver: list[str] | No
         "problems": problems,
         "model_credits": ASSEMBLE_MODEL_CREDITS,
         "mint_credits": mint_credits,
+        "publish_credits": publish_credits,
         "total_credits": build_credits + deliver_credits,
         # The path assemble/ takes: a new component makes it mixed, a new cluster alone does not.
         "mode": "mixed" if any(m["data_type"] != "Cluster" for m in mint) else "reuse",

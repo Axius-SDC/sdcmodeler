@@ -10,6 +10,7 @@ from pathlib import Path
 from sdcmodeler import __version__
 from sdcmodeler.client import SDCStudioClient, SDCStudioError
 from sdcmodeler import deliver as runs
+from sdcmodeler import translate as translations
 from sdcmodeler.kits import KitConflictError, write_kit
 
 
@@ -48,9 +49,30 @@ def _ship(c, a):
     return result
 
 
+def _translate(c, a):
+    plan = translations.plan(c, a.ct_id, a.language, project=a.project, publish=not a.review)
+    shown = {k: v for k, v in plan.items() if k not in ("estimate", "request")}
+    shown["summary"] = translations.summary(plan)
+    if a.plan:
+        return shown
+    if plan["refusals"]:
+        raise runs.RunRefused("Nothing was translated. " + " ".join(plan["refusals"]))
+    authorized_by = "yes_flag" if a.yes else "prompt"
+    if not a.yes:
+        sys.stderr.write(shown["summary"] + "\n" + _funding_line(plan) + "Proceed? [y/N] ")
+        sys.stderr.flush()
+        if not sys.stdin.isatty() or sys.stdin.readline().strip().lower() not in ("y", "yes"):
+            raise runs.RunRefused("Not approved; nothing was translated. Use --yes to approve without the prompt.")
+    result = translations.run(c, plan)
+    result["plan"] = shown
+    result["authorized_by"] = authorized_by
+    return result
+
+
 def _funding_line(plan) -> str:
     reload = (plan.get("funding") or {}).get("auto_reload") or {}
-    if plan.get("funding") and not plan["funding"].get("covered") and reload.get("would_cover"):
+    # The translate estimate says covered: true when a reload covers the shortfall; the shortfall is what counts.
+    if plan.get("funding") and (plan["funding"].get("shortfall_credits") or 0) > 0 and reload.get("would_cover"):
         return (f"The wallet is {plan['funding'].get('shortfall_credits')} credits short: auto-reload will add "
                 f"${reload.get('reload_total_usd')} ({reload.get('reloads_needed')} reload(s)) before anything is published.\n")
     return ""
@@ -86,7 +108,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     s = sub.add_parser("estimate", help="what an assembly tree would reuse, mint and cost (no call that spends)")
     s.add_argument("tree", help="JSON file: {label, components: [...], clusters: [...]}"); s.add_argument("--title", default="")
-    s.set_defaults(func=lambda c, a: c.estimate(_load_tree(a.tree), a.title))
+    s.add_argument("--draft", action="store_true", help="price a draft build (build --draft): no publication charges; same estimate id")
+    s.set_defaults(func=lambda c, a: c.estimate(_load_tree(a.tree), a.title, publish=not a.draft))
 
     s = sub.add_parser("build", help="assemble (and, with every leaf existing, publish and generate) a model; spends credits")
     s.add_argument("tree"); s.add_argument("--title", required=True); s.add_argument("--description", default="")
@@ -111,6 +134,15 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--plan", action="store_true", help="print the run's total and stop; nothing is spent")
     s.add_argument("--yes", action="store_true", help="approve without the prompt (for scripts); the run is still refused when it cannot be paid")
     s.set_defaults(func=_ship)
+
+    s = sub.add_parser("translate", help="translate a published model or component into another language and publish it; spends credits")
+    s.add_argument("ct_id", help="the published model or component")
+    s.add_argument("--language", required=True, help="the target language code, e.g. pt-BR")
+    s.add_argument("--project", default=None, help="the target project's ct_id (default: your default project)")
+    s.add_argument("--review", action="store_true", help="drafts only, to review in SDCStudio; nothing is published")
+    s.add_argument("--plan", action="store_true", help="print the estimate and stop; nothing is spent")
+    s.add_argument("--yes", action="store_true", help="approve without the prompt (for scripts); still refused when it cannot be paid")
+    s.set_defaults(func=_translate)
 
     s = sub.add_parser("job", help="one job by id (from build), or every job with --list")
     s.add_argument("job_ct_id", nargs="?")
@@ -159,10 +191,12 @@ def main(argv: list[str] | None = None) -> int:
     try:
         result = args.func(client, args)
         _print(result)
-        # ship: 3 when the run is still building on the server (do not run it again), 2 when the model is
-        # published but a deliverable failed; a script should notice either.
+        # ship and translate: 3 when the run is still building on the server (do not run it again), 2 when the model is
+        # published but a deliverable failed (or translated drafts were left unpublished); a script should notice either.
         if isinstance(result, dict) and result.get("status") == "in_flight":
             return 3
+        if isinstance(result, dict) and result.get("status") == "drafts_unpublished":
+            return 2
         return 2 if isinstance(result, dict) and result.get("failed") else 0
     except (SDCStudioError, KitConflictError, runs.RunRefused) as exc:
         sys.stderr.write(f"{exc}\n")

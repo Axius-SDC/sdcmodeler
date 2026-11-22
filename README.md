@@ -38,12 +38,12 @@ tree = {
     "label": "Vitals",
     "components": [
         {"ct_id": hits["results"][0]["ct_id"]},            # reuse: free
-        {"label": "Pulse", "data_type": "XdCount"},        # mint: 100 credits
+        {"label": "Pulse", "data_type": "XdCount"},        # mint: 200 credits (draft and publication)
     ],
     "clusters": [],
 }
 estimate = c.estimate(tree, "Vitals")       # the server's estimate: reuse, mint, problems, total_credits, wallet, key, estimate_id
-result = c.assemble("Vitals", tree, estimate_id=estimate["estimate_id"])   # 500 credits plus the mints
+result = c.assemble("Vitals", tree, estimate_id=estimate["estimate_id"])   # 500 credits plus 200 per new component
 ```
 
 Every leaf existing: the server assembles, publishes and generates the package in one call (`result["mode"] == "reuse"`; `published` and `generated` say so). Some leaves new: the pipeline runs and `result["job_ct_id"]` is polled with `c.job_status(...)`, or `c.wait_for_job(...)`, until `completed`, when the job has published and generated as asked and its result carries the model's links. `publish=False` leaves a draft for a person to review. The server refuses a build whose tree changed since the estimate.
@@ -64,6 +64,7 @@ sdcmodeler package <ct_id> --dir ./packages
 sdcmodeler app <ct_id> --profile lightweight --dir ./apps
 sdcmodeler kit <ct_id> --project ./my-app
 sdcmodeler ship tree.json --title "Vitals" --deliver package,kit --project ./my-app
+sdcmodeler translate <ct_id> --language pt-BR --plan
 sdcmodeler wallet
 ```
 
@@ -90,6 +91,8 @@ A JSON-RPC 2.0 stdio server, no SDK, the way sdcvalidator and sdcgovernance are 
 | `generate_app` | generate and download the application; needs `confirm_charge`; 1,500 credits the first time, free after | yes |
 | `add_supabase_kit` | write a model's Supabase kit into a project (`project_dir`); needs `confirm_charge`; charged with the application, once per model | yes |
 | `build_and_deliver` | one run: build, publish, wait, then deliver the package, application or kit; needs the `estimate_id` returned with the same `deliver`; refuses before building when the total cannot be paid | yes |
+| `estimate_translation` | what translating a published model or component into another language would reuse, copy and cost, and which enumeration values have no definition IRI; returns `estimate_id`; never spends, even with auto-spend | no |
+| `translate_model` | translate and publish (or `review: true` for drafts); needs the `estimate_id` the person saw, or an auto-spend key | yes |
 | `wallet` | balance in credits and the key's policy | no |
 
 **The policy lives in the server.** No spend without an estimate shown: `build_model` takes the `estimate_id` that `estimate_model` returned for the same title and tree in this process. Stop at the key's limit: a build whose estimate exceeds what the key may still spend is refused before the server is asked. Never pay: a 402 is reported with the wallet page's address and the tool stops. One approval per run: `build_and_deliver` follows the run's total the person saw, which covers the application or kit charge, so it needs no `confirm_charge`. No tool takes a URL, a key or a payment method as an argument; the key is the environment the server starts with.
@@ -176,21 +179,34 @@ On a deployment with the build-and-deliver release, SDCStudio does the run itsel
 
 The deliverables can live in the agent's settings instead of each call: `SDCMODELER_DELIVER` (for example `package,kit`), `SDCMODELER_OUTPUT_DIR` for the package and application, and `SDCMODELER_PROJECT_DIR` for the kit, in the environment of the CLI or of the MCP server's configuration.
 
+### Translating a model
+
+A published model or component can be translated into another language, and the translation published, in one call. SDCStudio copies every component the source needs into the target language, and each copy keeps its link to its original, its semantic links and its enumeration definition IRIs: a pt-BR record and an en-US record of the same data have their own structures and meet in the graph. The human text of the model's data tree is translated: labels, descriptions, enumeration values, boolean values, ordinal symbols, and the model's title and description. The model's contextual components (audit, attestation, access control, protocol, workflow, parties) and its Units stay in their original language, and links and constraints never change. The language is any BCP 47 language tag, such as `es-ES`, `sw` or `zh-Hant-TW` (SDCStudio 4.28.1; it is stored in canonical form, so `pt-br` is `pt-BR`); `SDCStudioClient.translate_languages(q)` searches the registry by name or tag. A translation that already exists is reused: a published one free, your own draft in the target project published in the run and charged for publication only.
+
+```bash
+sdcmodeler translate <ct_id> --language pt-BR --plan     # what it reuses, copies and costs; spends nothing
+sdcmodeler translate <ct_id> --language pt-BR            # asks, then translates and publishes into your default project
+sdcmodeler translate <ct_id> --language pt-BR --review   # drafts only, to review beside the originals in SDCStudio
+```
+
+With a coding agent, `estimate_translation` then `translate_model` with its `estimate_id`, or `translate_model` alone on an auto-spend key. The estimate lists **unanchored** enumeration values: values with no definition IRI, which once translated have nothing tying them to the original. Look at those before approving. The result is `completed` (with the translated model's id and links), `drafts_unpublished` (made and charged, but publishing failed: translate again to finish, charged for publication only, or publish the drafts in SDCStudio; `translate` exits 2), or `in_flight` (still running on the server: poll the job, never translate again; exits 3). Needs SDCStudio 4.28.0.
+
 ### What it costs
 
-Reuse is free, so the cheapest model is the one built most from published components. The Vitals tree costs 600 credits ($0.60): 500 to assemble, 100 to mint Pulse.
+Reuse is free, so the cheapest model is the one built most from published components. The Vitals tree costs 700 credits ($0.70): 500 for the model, and 200 for Pulse (100 for its draft, 100 to publish it).
 
 | Action | Credits | USD |
 |---|---|---|
 | Search, estimate, read models, download a package | 0 | $0.00 |
 | Reuse a published component | 0 | $0.00 |
-| Mint a component, or a new cluster below the root | 100 each | $0.10 |
-| Assemble a model (covers its root cluster) | 500 | $0.50 |
+| A new draft of a component or a cluster below the root: minted, copied or translated | 100 each | $0.10 |
+| Publish a component or a cluster below the root | 100 each | $0.10 |
+| A model: its draft, its root cluster and its publication | 500 | $0.50 |
 | Generate an application or Supabase kit, first time per user per model | 1,500 | $1.50 |
 
 ### Review before publishing
 
-Publishing locks a model permanently; that is what lets every Governed Data Record keep validating against the schema it was made for. A team with a data steward builds drafts (`--draft`, `publish: false` in `build_model`, or `publish=False` in the client), the steward reviews and publishes in SDCStudio, and the developer then takes the package, application or kit as usual.
+Publishing locks a model permanently; that is what lets every Governed Data Record keep validating against the schema it was made for. A team with a data steward builds drafts (`--draft`, `publish: false` in `build_model`, or `publish=False` in the client), priced without the publication charges (`estimate --draft`, `publish: false` in `estimate_model`), the steward reviews and publishes in SDCStudio, and the developer then takes the package, application or kit as usual.
 
 ### When a call is refused
 
@@ -200,6 +216,7 @@ Publishing locks a model permanently; that is what lets every Governed Data Reco
 | 403, `KeyPolicyRefused` | The key lacks a scope the call needs, or is past its spending limit | Ask the account holder to adjust the key |
 | 409, stale estimate (`AssemblyRefused`) | The tree changed after the estimate | Estimate again and build with the new id |
 | 409, retired component (`AssemblyRefused`) | The tree reuses a retired component | Search for its replacement and update the tree |
+| 409, `TranslationRefused` | `stale_estimate` (the source, language, project or review changed), `retired` (with the `successor` to translate instead), or `same_language`. Nothing was created | Estimate again, translate the successor, or pick another language |
 | Problems in the estimate | A component needs a `ct_id`, or a `label` and `data_type`; a cluster needs a label | Fix the tree; nothing was built |
 
 ## What is not here
