@@ -22,7 +22,7 @@ def call(name, arguments):
 @pytest.fixture(autouse=True)
 def bound(fake, tmp_path):
     fake.on("GET", "/api/v1/auth/api-tokens/", body={"tokens": [{"prefix": KEY[:12], "scopes": ["read", "build", "spend"], "spend_limit_credits": 1000, "spent_credits": 300}]})
-    # The server's estimate (4.17.0) for TREE: 500 + 100, the key at 700 remaining.
+    # The server's estimate (4.17.0) for TREE: 500 + 200 (since 11/24), the key at 700 remaining.
     from sdcmodeler.pricing import estimate_tree
 
     def server_estimate(request):
@@ -42,7 +42,7 @@ def test_initialize_and_tools_list():
     assert r["result"]["protocolVersion"] == "2025-06-18"
     assert "wallet" in r["result"]["instructions"]
     tools = rpc("tools/list")["result"]["tools"]
-    assert [t["name"] for t in tools] == ["search_components", "list_models", "get_model", "estimate_model", "build_model", "build_and_deliver", "job_status", "download_package", "generate_app", "add_supabase_kit", "wallet"]
+    assert [t["name"] for t in tools] == ["search_components", "list_models", "get_model", "estimate_model", "build_model", "build_and_deliver", "estimate_translation", "translate_model", "job_status", "download_package", "generate_app", "add_supabase_kit", "wallet"]
 
 
 def test_build_needs_the_estimate_the_person_saw(bound):
@@ -50,7 +50,7 @@ def test_build_needs_the_estimate_the_person_saw(bound):
     _, err = call("build_model", {"estimate_id": "nothing", "title": "Vitals", "tree": TREE})
     assert "estimate_model" in err
     est, _ = call("estimate_model", {"title": "Vitals", "tree": TREE})
-    assert est["total_credits"] == 600 and est["within_key_limit"] is True and est["key_remaining_credits"] == 700
+    assert est["total_credits"] == 700 and est["within_key_limit"] is True and est["key_remaining_credits"] == 700
     _, err = call("build_model", {"estimate_id": est["estimate_id"], "title": "Vitals renamed", "tree": TREE})
     assert "exact title and tree" in err
     built, _ = call("build_model", {"estimate_id": est["estimate_id"], "title": "Vitals", "tree": TREE})
@@ -69,7 +69,7 @@ def test_build_stops_at_the_keys_limit(bound):
     est, _ = call("estimate_model", {"title": "Vitals", "tree": TREE})
     assert est["within_key_limit"] is False
     _, err = call("build_model", {"estimate_id": est["estimate_id"], "title": "Vitals", "tree": TREE})
-    assert "may still spend 500" in err and "needs 600" in err
+    assert "may still spend 500" in err and "needs 700" in err
     assert not any(c.url.path.endswith("/assemble/") for c in bound.calls)
 
 

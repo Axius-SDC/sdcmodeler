@@ -162,3 +162,12 @@ def test_wait_for_job_polls_until_terminal(fake, monkeypatch):
     with pytest.raises(TimeoutError) as exc:
         fake.client().wait_for_job("j2", timeout=0, interval=0.01)
     assert exc.value.job["status"] == "running"
+
+
+def test_a_draft_estimate_sends_publish_false_and_a_published_one_leaves_it_out(fake):
+    fake.on("POST", "/api/v1/dmgen/assemble/estimate/", body={"estimate_id": "x", "total_credits": 600, "problems": []})
+    c = fake.client()
+    c.estimate({"label": "R", "components": [], "clusters": []}, "R", publish=False)
+    assert body_of(fake.calls[-1])["publish"] is False
+    c.estimate({"label": "R", "components": [], "clusters": []}, "R")
+    assert "publish" not in body_of(fake.calls[-1])

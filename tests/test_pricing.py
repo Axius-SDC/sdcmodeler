@@ -16,7 +16,8 @@ def test_reuse_is_free_and_mints_are_counted():
     # The new nested cluster Context is minted too; the root cluster is the model's (SDCStudio 4.17.5).
     assert [(m["label"], m["data_type"]) for m in e["mint"]] == [("Pulse", "XdCount"), ("Context", "Cluster"), ("Note", "XdString")]
     assert e["mint"][2]["path"] == "Vitals/Context/Note"
-    assert e["total_credits"] == ASSEMBLE_MODEL_CREDITS + 3 * MINT_COMPONENT_CREDITS == 800
+    assert e["total_credits"] == ASSEMBLE_MODEL_CREDITS + 3 * MINT_COMPONENT_CREDITS == 1100
+    assert (e["mint_credits"], e["publish_credits"]) == (300, 300)   # drafts, then their publication (4.28.0)
     assert e["mode"] == "mixed" and e["problems"] == []
 
 
@@ -38,8 +39,14 @@ def test_a_new_cluster_alone_is_billed_but_takes_the_reuse_path():
     tree = {"label": "Root", "components": [{"ct_id": "a" * 24}],
             "clusters": [{"label": "Group", "components": [{"ct_id": "b" * 24}], "clusters": []}]}
     e = estimate_tree(tree, "Grouped")
-    assert (e["mode"], e["total_credits"]) == ("reuse", 600)
+    assert (e["mode"], e["total_credits"]) == ("reuse", 700)
 
 
 def test_the_title_is_trimmed_before_hashing_as_the_server_does():
     assert estimate_tree(TREE, "  Vitals ")["estimate_id"] == estimate_tree(TREE, "Vitals")["estimate_id"]
+
+
+def test_a_draft_build_leaves_out_publication_and_keeps_the_id():
+    draft, published = estimate_tree(TREE, "Vitals", publish=False), estimate_tree(TREE, "Vitals")
+    assert (draft["publish_credits"], draft["total_credits"]) == (0, 800)
+    assert draft["estimate_id"] == published["estimate_id"]
