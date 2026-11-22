@@ -3,11 +3,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
 from sdcmodeler import __version__
 from sdcmodeler.client import SDCStudioClient, SDCStudioError
+from sdcmodeler import deliver as runs
 from sdcmodeler.kits import KitConflictError, write_kit
 
 
@@ -17,6 +19,41 @@ def _print(data) -> None:
 
 def _load_tree(path: str) -> dict:
     return json.loads(Path(path).read_text(encoding="utf-8"))
+
+
+def _ship(c, a):
+    tree = _load_tree(a.tree)
+    plan = runs.plan(c, tree, a.title, a.deliver)
+    shown = {k: v for k, v in plan.items() if k != "estimate"}
+    if a.plan:
+        return shown
+    if plan["refusals"]:
+        raise runs.RunRefused("Nothing was built. " + " ".join(plan["refusals"]))
+    authorized_by = "yes_flag" if a.yes else "prompt"
+    if not a.yes:
+        sys.stderr.write(
+            f"{plan['title']}: {plan['build_credits']} credits to build and publish into {plan['publishes_into']}"
+            + (f", {plan['deliver_credits']} for {', '.join(i for i in plan['deliver'] if i in runs.CHARGED)}" if plan["deliver_credits"] else "")
+            + f"; {plan['total_credits']} in all. Deliver: {', '.join(plan['deliver']) or 'nothing'}.\n"
+            + _funding_line(plan)
+            + "Publishing is permanent. Proceed? [y/N] "
+        )
+        sys.stderr.flush()
+        if not sys.stdin.isatty() or sys.stdin.readline().strip().lower() not in ("y", "yes"):
+            raise runs.RunRefused("Not approved; nothing was built. Use --yes to approve without the prompt.")
+    out_dir = a.dir or os.environ.get("SDCMODELER_OUTPUT_DIR") or "."
+    project = a.project or os.environ.get("SDCMODELER_PROJECT_DIR") or out_dir
+    result = runs.run(c, tree, a.title, plan, output_dir=out_dir, project_dir=project, description=a.description)
+    result["authorized_by"] = authorized_by
+    return result
+
+
+def _funding_line(plan) -> str:
+    reload = (plan.get("funding") or {}).get("auto_reload") or {}
+    if plan.get("funding") and not plan["funding"].get("covered") and reload.get("would_cover"):
+        return (f"The wallet is {plan['funding'].get('shortfall_credits')} credits short: auto-reload will add "
+                f"${reload.get('reload_total_usd')} ({reload.get('reloads_needed')} reload(s)) before anything is published.\n")
+    return ""
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -31,7 +68,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     s = sub.add_parser("search", help="search the public catalog of published components")
     s.add_argument("query"); s.add_argument("--type"); s.add_argument("--project"); s.add_argument("--page-size", type=int, default=25)
-    s.set_defaults(func=lambda c, a: c.search_components(a.query, type=a.type, project=a.project, page_size=a.page_size))
+    s.add_argument("--scope", choices=["mine", "public"], default=None,
+                   help="mine: your own published components first, then public (needs a key; the default with one); public: the catalog only")
+    s.set_defaults(func=lambda c, a: c.search_components(a.query, type=a.type, project=a.project, scope=a.scope, page_size=a.page_size))
 
     s = sub.add_parser("models", help="published models in the public catalog")
     s.add_argument("query", nargs="?", default="")
@@ -62,6 +101,16 @@ def build_parser() -> argparse.ArgumentParser:
             result["job"] = c.wait_for_job(result["job_ct_id"])
         return result
     s.set_defaults(func=_build)
+
+    s = sub.add_parser("ship", help="build, publish and deliver in one run, after one approval of the run's total; spends credits")
+    s.add_argument("tree"); s.add_argument("--title", required=True); s.add_argument("--description", default="")
+    s.add_argument("--deliver", default=None,
+                   help="comma-separated: package, app:lightweight, app:enterprise, kit (default: $SDCMODELER_DELIVER, else package)")
+    s.add_argument("--dir", default=None, help="where the package and application land (default: $SDCMODELER_OUTPUT_DIR, else here)")
+    s.add_argument("--project", default=None, help="for kit: the project holding supabase/ (default: $SDCMODELER_PROJECT_DIR, else --dir)")
+    s.add_argument("--plan", action="store_true", help="print the run's total and stop; nothing is spent")
+    s.add_argument("--yes", action="store_true", help="approve without the prompt (for scripts); the run is still refused when it cannot be paid")
+    s.set_defaults(func=_ship)
 
     s = sub.add_parser("job", help="one job by id (from build), or every job with --list")
     s.add_argument("job_ct_id", nargs="?")
@@ -108,9 +157,14 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     client = SDCStudioClient(base_url=args.url)
     try:
-        _print(args.func(client, args))
-        return 0
-    except (SDCStudioError, KitConflictError) as exc:
+        result = args.func(client, args)
+        _print(result)
+        # ship: 3 when the run is still building on the server (do not run it again), 2 when the model is
+        # published but a deliverable failed; a script should notice either.
+        if isinstance(result, dict) and result.get("status") == "in_flight":
+            return 3
+        return 2 if isinstance(result, dict) and result.get("failed") else 0
+    except (SDCStudioError, KitConflictError, runs.RunRefused) as exc:
         sys.stderr.write(f"{exc}\n")
         return 1
     finally:

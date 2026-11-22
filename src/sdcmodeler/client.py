@@ -35,12 +35,22 @@ class SDCStudioError(Exception):
 
 
 class InsufficientCredits(SDCStudioError):
-    """402: the wallet cannot pay. ``estimated_cost_credits`` and ``balance_credits`` are what to tell the person."""
+    """
+    402: the wallet cannot pay. ``estimated_cost_credits`` and ``balance_credits`` are what to tell the person.
+
+    Since SDCStudio's build-and-deliver release a run that cannot be funded also says why (``reason``:
+    auto_reload_off, no_card, auto_reload_unconfirmed, ceiling, declined, reload_failed,
+    organization_wallet, insufficient_funds), the ``shortfall_credits``, and the wallet page
+    (``wallet_url``, relative to the deployment). Nothing was published and nothing charged.
+    """
 
     def __init__(self, status: int, body: Any):
         b = body if isinstance(body, dict) else {}
         self.estimated_cost_credits = b.get("estimated_cost_credits")
         self.balance_credits = b.get("balance_credits")
+        self.reason = b.get("reason")
+        self.shortfall_credits = b.get("shortfall_credits")
+        self.wallet_url = b.get("wallet_url")
         super().__init__(status, body, b.get("error") or "Insufficient credits.")
 
 
@@ -135,9 +145,21 @@ class SDCStudioClient:
     # ------------------------------------------------------------------ catalog (public)
 
     def search_components(self, query: str = "", *, type: str | None = None, project: str | None = None,
-                          page: int = 1, page_size: int = 50) -> dict[str, Any]:
-        """Published components in the public catalog: ``{"count", "results": [{ct_id, label, description, component_type, project_name, reuse_ref, ...}]}``."""
-        return self._get("/api/v1/catalog/components/", search=query, type=type, project=project, page=page, page_size=page_size)
+                          scope: str | None = None, page: int = 1, page_size: int = 50) -> dict[str, Any]:
+        """
+        Published components: ``{"count", "results": [{ct_id, label, description, component_type, project_name, reuse_ref, ...}]}``.
+
+        ``scope`` (SDCStudio's build-and-deliver release): ``mine`` lists the caller's own published
+        components first, private included, then the public catalog, each result marked ``scope``;
+        ``public`` lists the public catalog only. Left out, the server decides: ``mine`` with a key,
+        ``public`` without. ``mine`` needs a key; older deployments ignore the parameter.
+        """
+        if scope not in (None, "", "mine", "public"):
+            raise ValueError("scope must be 'mine' or 'public'")
+        if scope == "mine" and not self.api_key:
+            raise ValueError("scope 'mine' needs an API key (SDCSTUDIO_API_KEY)")
+        return self._get("/api/v1/catalog/components/", search=query, type=type, project=project, scope=scope,
+                         page=page, page_size=page_size)
 
     def list_models(self, query: str = "", *, page: int = 1, page_size: int = 50) -> dict[str, Any]:
         """Published models in the public catalog."""
@@ -194,7 +216,8 @@ class SDCStudioClient:
 
     # ------------------------------------------------------------------ building
 
-    def estimate(self, tree: dict[str, Any], title: str = "", *, allow_retired: bool = False) -> dict[str, Any]:
+    def estimate(self, tree: dict[str, Any], title: str = "", *, allow_retired: bool = False,
+                 deliver: list[str] | None = None) -> dict[str, Any]:
         """
         What the assembly would reuse, mint and cost.
 
@@ -204,14 +227,21 @@ class SDCStudioClient:
         local computation produces. Without a key, or against a deployment older
         than 4.17.0, the local estimate (``sdcmodeler.pricing``), marked
         ``"source": "local"``.
+
+        ``deliver`` (a normalized list, see ``sdcmodeler.deliver.parse_deliver``) prices the run's
+        deliverables too and joins the ``estimate_id``. A deployment with the build-and-deliver release
+        answers ``deliver_credits``, ``build_credits``, ``will_publish``, ``funding`` and ``auto_spend``;
+        an older one ignores ``deliver`` and answers the build alone, without those fields.
         """
-        local = pricing.estimate_tree(tree, title)
+        local = pricing.estimate_tree(tree, title, deliver)
         if not self.api_key:
             local["source"] = "local"
             return local
         payload: dict[str, Any] = {"title": title, "data": tree}
         if allow_retired:
             payload["allow_retired"] = True
+        if deliver:
+            payload["deliver"] = list(deliver)
         resp = self._http.post("/api/v1/dmgen/assemble/estimate/", json=payload)
         if resp.status_code == 404:
             local["source"] = "local"
@@ -223,7 +253,8 @@ class SDCStudioClient:
 
     def assemble(self, title: str, tree: dict[str, Any], *, description: str = "",
                  contextual: dict | None = None, allow_retired: bool = False,
-                 estimate_id: str | None = None, publish: bool = True, generate: bool = True) -> dict[str, Any]:
+                 estimate_id: str | None = None, publish: bool = True, generate: bool = True,
+                 deliver: list[str] | None = None) -> dict[str, Any]:
         """
         POST ``/api/v1/dmgen/assemble/``.
 
@@ -237,6 +268,11 @@ class SDCStudioClient:
         ``estimate_id`` is the id of the estimate the person saw; the server
         refuses a build whose tree no longer matches it (409 ``stale_estimate``,
         raised as ``AssemblyRefused``).
+
+        ``deliver`` (build-and-deliver release): the server funds and holds the whole run first, then
+        delivers each item once the model is published; the 200 body (reuse) or the job's result (mixed)
+        carries ``delivered`` (``[{item, status: ready|failed, download, error?}]``) and
+        ``deliver_charged_credits``. Pass the same list the estimate was made with.
         """
         # assemble/ needs the Modeler's default project and answers 400 without one;
         # the PRD's "default project created on first use" (3.1.4) is done here,
@@ -255,6 +291,8 @@ class SDCStudioClient:
             payload["allow_retired"] = True
         if estimate_id:
             payload["estimate_id"] = estimate_id
+        if deliver:
+            payload["deliver"] = list(deliver)
         if not publish:
             payload["publish"] = False
         if not generate or not publish:

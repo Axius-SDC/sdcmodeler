@@ -6,6 +6,47 @@ of the SDC4 reference model.
 
 ## [Unreleased]
 
+## [4.5.0] - 2026-11-22
+
+### Added
+
+- **Build and deliver in one run.** `build_and_deliver` (MCP) and `sdcmodeler ship` (CLI) build the model, publish it
+  and every new component into the Modeler's private default project, wait for the job, then deliver the package,
+  the application (lightweight or enterprise) or the Supabase kit, one or several. One approval of the run's total
+  covers the build and the application or kit charge (1,500 credits once; one charge covers both), so the tool
+  needs no `confirm_charge`. A run the wallet or the key cannot pay is refused before anything is built.
+  `estimate_model` takes `deliver` and returns the run's total under `run`; `ship --plan` prints it. Deliverables
+  default to `SDCMODELER_DELIVER`, the kit's project to `SDCMODELER_PROJECT_DIR`. Once the model is published, a
+  deliverable that fails is reported under `failed` and the others still run; `ship` exits 2. `sdcmodeler.deliver`
+  holds the logic for both. Phase 1 of SDCStudio's build-and-deliver PRD: composed from SDCStudio's existing calls.
+- **The run on the server, where SDCStudio offers it** (phase 4; SDCStudio 4.27.0).
+  When the server's estimate prices deliverables, `build_and_deliver` and `ship` send `deliver` to the estimate and
+  to `assemble/`: SDCStudio funds and holds the whole run before the first publish, reloads when the person allows
+  it, delivers each item from the hold, and sdcmodeler downloads what is ready (an application without generating
+  it again) and writes the kit. A failed item is reported, not fetched outside the run. A short balance is refused
+  only when the estimate says no reload covers it. Against an older deployment the run is composed as before.
+- **Auto-spend.** A key the person created with auto-spend (read from the server, never from an argument) runs
+  `build_and_deliver` without a prior estimate; the result carries the estimate and `authorized_by`. `ship` still
+  asks at the terminal unless `--yes`.
+- **Your own components first.** `search_components` (client and MCP) and `sdcmodeler search` take `scope`
+  (`mine`: your own published components, private included, then the public catalog; `public`); with a key the
+  server's default is `mine`.
+- `estimate_id` binds `deliver` when there is one, locally as on the server. `estimate_model` with `deliver` now
+  answers the run's estimate, whose `estimate_id` is the one `build_and_deliver` takes.
+- `InsufficientCredits` carries the server's `reason`, `shortfall_credits` and `wallet_url`; the MCP error names
+  the reason and what the person does about it, as does the refusal before the build when the estimate says the
+  run cannot be funded (the text people see most). The key's limit counts its `reserved_credits`. `ship`'s result
+  says `authorized_by` (`prompt` or `yes_flag`).
+- A run still building when the wait ends (a timeout, or the job status unreachable) returns `status: in_flight`
+  with the job's id and "do not build again", rather than an error: `assemble/` has funded it and the server
+  finishes it. `ship` exits 3.
+
+### Documentation
+
+- README: a walkthrough for an SDCStudio team. Setting up keys and the wallet, a session with a coding agent,
+  the tree format and the CLI end to end, costs in credits, reviewing drafts before publishing, and what each
+  refusal means.
+
 ## [4.4.1] - 2026-11-02
 
 ### Fixed
