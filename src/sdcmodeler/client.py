@@ -324,7 +324,15 @@ class SDCStudioClient:
         data = _body(resp)
         data = dict(data) if isinstance(data, dict) else {"result": data}
         data["mode"] = "mixed" if resp.status_code == 202 else "reuse"
+        self._absolute_bench_url(data)
         return data
+
+    def _absolute_bench_url(self, data: Any) -> None:
+        """SDCStudio gives ``bench_url`` (the page that opens a draft on the Bench) as a path; make it a full URL."""
+        if isinstance(data, dict):
+            url = data.get("bench_url")
+            if isinstance(url, str) and url.startswith("/"):
+                data["bench_url"] = self.base_url + url
 
     # ------------------------------------------------------------------ translating (SDCStudio 4.28.0)
 
@@ -386,9 +394,12 @@ class SDCStudioClient:
         """
         The job resource (SDCStudio 4.17.0): ``status`` (queued, running, completed,
         failed), ``step``, ``cost_credits``, ``result`` with the model's links on
-        completion, ``error`` on failure.
+        completion (``bench_url`` made a full URL), ``error`` on failure.
         """
-        return self._get(f"/api/v1/jobs/{job_ct_id}/")
+        job = self._get(f"/api/v1/jobs/{job_ct_id}/")
+        if isinstance(job, dict):
+            self._absolute_bench_url(job.get("result"))
+        return job
 
     def wait_for_job(self, job_ct_id: str, *, timeout: float = 900.0, interval: float = 3.0,
                      max_interval: float = 20.0) -> dict[str, Any]:

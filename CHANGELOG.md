@@ -6,6 +6,16 @@ of the SDC4 reference model.
 
 ## [Unreleased]
 
+## [4.7.0] - 2026-11-23
+
+### Added
+
+- **The Bench link for drafts** (SDCStudio 4.29.0): a draft build (`publish: false` in `build_model`,
+  `build --draft`, `assemble(publish=False)`) returns `bench_url`, the page that opens the draft on the Bench in
+  SDCStudio, as a full URL; on the pipeline path it is on the job's result. `build_model`'s `next` tells the agent
+  to give the person that link, and `build --draft` prints it. The README says how to make a draft visible to the
+  team: the key owner's current project set to the team's project.
+
 ## [4.6.0] - 2026-11-22
 
 ### Added

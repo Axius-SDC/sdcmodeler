@@ -206,7 +206,7 @@ Reuse is free, so the cheapest model is the one built most from published compon
 
 ### Review before publishing
 
-Publishing locks a model permanently; that is what lets every Governed Data Record keep validating against the schema it was made for. A team with a data steward builds drafts (`--draft`, `publish: false` in `build_model`, or `publish=False` in the client), priced without the publication charges (`estimate --draft`, `publish: false` in `estimate_model`), the steward reviews and publishes in SDCStudio, and the developer then takes the package, application or kit as usual.
+Publishing locks a model permanently; that is what lets every Governed Data Record keep validating against the schema it was made for. A team with a data steward builds drafts (`--draft`, `publish: false` in `build_model`, or `publish=False` in the client), priced without the publication charges (`estimate --draft`, `publish: false` in `estimate_model`), the steward reviews and publishes in SDCStudio, and the developer then takes the package, application or kit as usual. A draft build returns `bench_url`, the page that opens the draft on the Bench in SDCStudio. The draft lands in the key owner's current project, so for the team to see it, the key owner sets their current project in SDCStudio to the team's project before building.
 
 ### When a call is refused
 
