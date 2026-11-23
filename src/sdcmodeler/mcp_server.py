@@ -165,7 +165,8 @@ TOOLS: list[dict[str, Any]] = [
             "model is published and its package generated at once (result has ct_id and artifacts); with "
             "new leaves the pipeline runs and the result has a job_ct_id to poll with job_status; when the "
             "job completes it has published and generated as asked and carries the model's links. publish "
-            "false leaves a draft for a person to review. A 402 "
+            "false leaves a draft for a person to review, with bench_url, the page that opens it on the Bench in "
+            "SDCStudio (on the job's result for the pipeline path); give the person that link. A 402 "
             "means the wallet needs funding at the wallet page; report it and stop."
         ),
         "inputSchema": {
@@ -521,6 +522,13 @@ def _handle_build_model(args: dict) -> Any:
         result["next"] = (
             f"Poll job_status with job_ct_id {result.get('job_ct_id')} until completed; its result then says "
             "published and generated and carries the model's links."
+            + ("" if publish else " Its bench_url is where a person opens the draft on the Bench in SDCStudio "
+               "to review and finish it; give the person that link.")
+        )
+    elif not publish and result.get("bench_url"):
+        result["next"] = (
+            f"The draft is in the key owner's current project. Give the person the link {result['bench_url']}: "
+            "it opens the draft on the Bench in SDCStudio to review and finish."
         )
     return result
 

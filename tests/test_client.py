@@ -171,3 +171,12 @@ def test_a_draft_estimate_sends_publish_false_and_a_published_one_leaves_it_out(
     assert body_of(fake.calls[-1])["publish"] is False
     c.estimate({"label": "R", "components": [], "clusters": []}, "R")
     assert "publish" not in body_of(fake.calls[-1])
+
+
+def test_a_drafts_bench_url_comes_back_as_a_full_url(fake):
+    fake.on("GET", "/api/v1/auth/modeler/", body={"project_ct_id": "p1"})
+    fake.on("POST", "/api/v1/dmgen/assemble/", body={"ct_id": "m1", "published": False, "bench_url": "/app/models/bench/m1"})
+    assert fake.client().assemble("Vitals", TREE, publish=False)["bench_url"] == f"{BASE}/app/models/bench/m1"
+    fake.on("GET", "/api/v1/jobs/j1/", body={"ct_id": "j1", "status": "completed",
+                                             "result": {"dm_ct_id": "m1", "bench_url": "/app/models/bench/m1"}})
+    assert fake.client().job_status("j1")["result"]["bench_url"] == f"{BASE}/app/models/bench/m1"
