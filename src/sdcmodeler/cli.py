@@ -122,6 +122,12 @@ def build_parser() -> argparse.ArgumentParser:
                             publish=not a.draft, generate=not a.no_generate)
         if a.wait and result.get("mode") == "mixed" and result.get("job_ct_id"):
             result["job"] = c.wait_for_job(result["job_ct_id"])
+        if a.draft:
+            bench = result.get("bench_url") or ((result.get("job") or {}).get("result") or {}).get("bench_url")
+            if bench:
+                sys.stderr.write(f"Open the draft on the Bench: {bench}\n")
+            elif result.get("mode") == "mixed":
+                sys.stderr.write("When the job completes, its result's bench_url opens the draft on the Bench.\n")
         return result
     s.set_defaults(func=_build)
 

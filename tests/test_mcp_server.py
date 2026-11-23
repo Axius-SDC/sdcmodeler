@@ -172,3 +172,20 @@ def test_a_problem_the_server_names_is_reported_and_nothing_is_built(bound):
     assert "Component not found or not published" in err and "abc123abc123abc123abc123" in err
     assert "defect" not in err
     assert not any(c.url.path.endswith("/assemble/") for c in bound.calls)
+
+
+def test_a_draft_build_hands_the_person_the_bench_link(bound):
+    bound.on("POST", "/api/v1/dmgen/assemble/", body={"ct_id": "m1", "published": False, "bench_url": "/app/models/bench/m1"})
+    est, _ = call("estimate_model", {"title": "Vitals", "tree": TREE, "publish": False})
+    built, _ = call("build_model", {"estimate_id": est["estimate_id"], "title": "Vitals", "tree": TREE, "publish": False})
+    assert built["bench_url"] == f"{BASE}/app/models/bench/m1" and built["bench_url"] in built["next"]
+
+
+def test_a_draft_on_the_pipeline_path_says_the_job_result_carries_the_bench_link(bound):
+    bound.on("POST", "/api/v1/dmgen/assemble/", status=202, body={"status": "processing", "job_ct_id": "j9", "data_source_ct_id": "ds"})
+    est, _ = call("estimate_model", {"title": "Vitals", "tree": TREE, "publish": False})
+    built, _ = call("build_model", {"estimate_id": est["estimate_id"], "title": "Vitals", "tree": TREE, "publish": False})
+    assert "j9" in built["next"] and "bench_url" in built["next"]
+    published, _ = call("build_model", {"estimate_id": call("estimate_model", {"title": "Vitals", "tree": TREE})[0]["estimate_id"],
+                                        "title": "Vitals", "tree": TREE})
+    assert "bench_url" not in published["next"], "a published build is not pointed at the Bench"
