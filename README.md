@@ -225,7 +225,7 @@ Validation (sdcvalidator's server), governance (sdcgovernance's), receipt verifi
 
 ## Release
 
-Two steps: merge to `main`, then push the tag `v<version>` matching `pyproject.toml`. `release.yml` runs the tests, builds, publishes to PyPI by trusted publisher and to the MCP registry.
+Two steps: merge to `main`, then push a signed tag `v<version>` matching `pyproject.toml` (`git tag -s v<version> -m <version>`, key `F1CB92D8CFA30F3B`; check it with `git tag -v v<version>` before pushing). `release.yml` runs the tests, builds, publishes to PyPI by trusted publisher and to the MCP registry.
 
 ## License
 
